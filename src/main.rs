@@ -6,7 +6,6 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Padding, Paragraph, TableState, Tabs, Widget},
 };
-
 mod data;
 mod pages;
 mod tab;
@@ -86,6 +85,20 @@ fn run(
                             }
                         }
                     } else if tabmanager.get_selection() == 1 {
+                        if let Some(index) = table_state.selected() {
+                            match index {
+                                0 => {
+                                    println!("Toggle Dark Mode");
+                                }
+                                1 => {
+                                    println!("File Explorer File Extensions");
+                                }
+                                2 => {
+                                    println!("Windows Activation");
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
 
