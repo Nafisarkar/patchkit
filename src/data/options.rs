@@ -1,13 +1,23 @@
-pub const CLEANING_OPTIONS: [(&str, &str); 3] = [
+//! The user-facing option lists for each tab. Every entry is a
+//! `(name, description)` pair, so the pages can build their rows from here
+//! without hardcoding the text.
+
+/// Rows of the Cleaning tab, in display order.
+pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
     ("Recycle Bin", "Empty the Recycle Bin to free up disk space"),
-    ("Windows Temp", "Delete system temp files from C:\\Windows\\Temp"),
+    (
+        "Windows Temp",
+        "Delete system temp files from C:\\Windows\\Temp",
+    ),
     (
         "User Temp",
         "Delete per-user temp files from %LOCALAPPDATA%\\Temp",
     ),
+    ("Disk Clean", "Will open windows disk cleaning utility"),
 ];
 
-pub const TWEAKS_OPTIONS: [(&str, &str); 3] = [
+/// Rows of the Tweaks tab, in display order.
+pub const TWEAKS_OPTIONS: [(&str, &str); 4] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -15,6 +25,10 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 3] = [
     (
         "Show File Extensions",
         "Show file extensions in File Explorer (.exe, .png, etc.)",
+    ),
+    (
+        "Show Hidden Files",
+        "Show or hide hidden files and folders in File Explorer",
     ),
     ("Windows Activation", "Activate Windows with massgrave"),
 ];

@@ -1,54 +1,49 @@
+//! The Cleaning tab: shows what the Recycle Bin and temp folders contain, and
+//! runs the selected cleanup action.
+
 use ratatui::{
     Frame,
-    layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
-    widgets::{Block, Cell, Row, Table, TableState},
+    layout::Rect,
+    widgets::{Cell, Row, TableState},
 };
 
-use crate::tools::recycle::{preview_recycle_bin, preview_user_temp};
-use crate::{data::options::CLEANING_OPTIONS, tools::recycle::preview_windows_temp};
+use crate::data::options::CLEANING_OPTIONS;
+use crate::tools::cleaning::{self, CleaningStatus};
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState) {
-    let rows = CLEANING_OPTIONS.iter().map(|(name, description)| {
-        let status = match *name {
-            "Recycle Bin" => preview_recycle_bin()
-                .to_owned()
-                .unwrap_or_else(|| "unknown".to_string()),
+/// Render the Cleaning table from the cached `status`.
+pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &CleaningStatus) {
+    let rows = CLEANING_OPTIONS
+        .iter()
+        .map(|(name, description)| {
+            // Pick the status text that belongs to this row.
+            let value = match *name {
+                "Recycle Bin" => status.recycle_bin.as_str(),
+                "Windows Temp" => status.windows_temp.as_str(),
+                "User Temp" => status.user_temp.as_str(),
+                _ => " ",
+            };
 
-            "Windows Temp" => preview_windows_temp()
-                .to_owned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            "User Temp" => preview_user_temp()
-                .to_owned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            _ => " ".to_string(),
-        };
+            Row::new(vec![
+                Cell::from(*name),
+                Cell::from(*description),
+                Cell::from(value),
+            ])
+        })
+        .collect::<Vec<_>>();
 
-        Row::new(vec![
-            Cell::from(*name),
-            Cell::from(*description),
-            Cell::from(status),
-        ])
-    });
+    super::action_table(frame, area, state, rows);
+}
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(35),
-            Constraint::Percentage(55),
-            Constraint::Percentage(20),
-        ],
-    )
-    .header(
-        Row::new(vec!["Action", "Description", "Status"])
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-    )
-    .block(Block::bordered())
-    .row_highlight_style(
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    );
-    frame.render_stateful_widget(table, area, state);
+/// Run the cleaning action for the selected row, then refresh the status.
+pub fn activate(index: usize, status: &mut CleaningStatus) -> Result<String, String> {
+    let result = match index {
+        0 => cleaning::clear_recycle_bin(),
+        1 => cleaning::clean_windows_temp(),
+        2 => cleaning::clean_user_temp(),
+        3 => cleaning::run_disk_cleanup(),
+        _ => return Ok(String::new()),
+    };
+
+    status.refresh();
+    result
 }

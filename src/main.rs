@@ -1,21 +1,32 @@
-use color_eyre::eyre::{Ok, Result};
+//! PatchKit — a small Windows cleanup and tweaks TUI.
+//!
+//! This is the entry point. It builds the tab list, runs the event loop
+//! (draw a frame, wait for a key, handle it), and lays out the window: a
+//! title bar, a tab bar, the active page's table, and a one-line status bar.
+
+use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Layout, Margin},
     style::{Color, Modifier, Style},
-    widgets::{Block, Padding, Paragraph, TableState, Tabs, Widget},
+    widgets::{Paragraph, TableState, Tabs, Widget},
 };
 mod data;
 mod pages;
 mod sys;
-mod tab;
-mod tab_manager;
+mod tabs;
 mod tools;
-use tab_manager::TabManager;
+use tabs::TabManager;
 
-use crate::tools::recycle::{clean_user_temp, clean_windows_temp, clear_recycle_bin};
+use crate::data::options::{CLEANING_OPTIONS, TWEAKS_OPTIONS};
+use crate::tools::{cleaning, tweaks};
 
+/// Key hints shown at the bottom-right of the window.
+const KEY_HINTS: &str = "↑↓ move   ⏎ run   ←→ tabs   q quit";
+
+/// Entry point: register the tabs, start the terminal, run the app, then make
+/// sure the terminal is restored even if the app exits early.
 fn main() -> Result<()> {
     let mut manager = TabManager::new();
     manager.add_tab("Cleaning");
@@ -24,11 +35,6 @@ fn main() -> Result<()> {
     let mut table_state = TableState::default();
     table_state.select(Some(0));
 
-    manager
-        .get_tabs()
-        .iter()
-        .for_each(|f| println!("{} - {}", f.title, f.tabnumber));
-
     color_eyre::install()?;
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut manager, &mut table_state);
@@ -36,105 +42,153 @@ fn main() -> Result<()> {
     result
 }
 
+/// The event loop. Draws a frame, blocks until a key is pressed, handles that
+/// key, then loops again. Returns when the user quits.
 fn run(
     terminal: &mut DefaultTerminal,
     tabmanager: &mut TabManager,
     table_state: &mut TableState,
 ) -> Result<()> {
+    // Cached UI state, refreshed only when it can actually change.
+    let mut cleaning_status = cleaning::CleaningStatus::new();
+    let mut tweaks_status = tweaks::TweaksStatus::new();
+    // Result of the last action, shown in the status bar.
+    let mut message = String::new();
+
     loop {
         // draw
-        terminal.draw(|f| draw(f, tabmanager, table_state))?;
+        terminal.draw(|frame| {
+            draw(
+                frame,
+                tabmanager,
+                table_state,
+                &cleaning_status,
+                &tweaks_status,
+                &message,
+            )
+        })?;
 
         // event handler
         if let Event::Key(key) = event::read()? {
+            // On Windows crossterm reports both press and release, so ignore
+            // everything that is not a press to avoid handling a key twice.
             if key.kind != event::KeyEventKind::Press {
                 continue;
             }
-            match key.code {
-                event::KeyCode::Esc | KeyCode::Char('q') => {
-                    break;
-                }
 
-                // table nav
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => break,
+
+                // table navigation
                 KeyCode::Up | KeyCode::Char('k') => {
                     let selected = table_state.selected().unwrap_or(0);
-
                     if selected > 0 {
                         table_state.select(Some(selected - 1));
                     }
                 }
-
                 KeyCode::Down | KeyCode::Char('j') => {
                     let selected = table_state.selected().unwrap_or(0);
-
-                    if selected + 1 < 3 {
+                    if selected + 1 < item_count(tabmanager.get_selection()) {
                         table_state.select(Some(selected + 1));
                     }
                 }
 
+                // run the selected action
                 KeyCode::Enter => {
-                    if tabmanager.get_selection() == 0 {
-                        if let Some(index) = table_state.selected() {
-                            match index {
-                                0 => {
-                                    let _ = clear_recycle_bin();
-                                }
-                                1 => {
-                                    let _ = clean_windows_temp();
-                                }
-                                2 => {
-                                    let _ = clean_user_temp();
-                                }
-                                _ => {}
+                    if let Some(index) = table_state.selected() {
+                        match tabmanager.get_selection() {
+                            0 => {
+                                message = result_message(pages::cleaning::activate(
+                                    index,
+                                    &mut cleaning_status,
+                                ));
                             }
-                        }
-                    } else if tabmanager.get_selection() == 1 {
-                        if let Some(index) = table_state.selected() {
-                            match index {
-                                0 => {
-                                    println!("Toggle Dark Mode");
-                                }
-                                1 => {
-                                    println!("File Explorer File Extensions");
-                                }
-                                2 => {
-                                    println!("Windows Activation");
-                                }
-                                _ => {}
+                            1 => {
+                                message = result_message(pages::tweaks::activate(
+                                    index,
+                                    &mut tweaks_status,
+                                ));
                             }
+                            _ => {}
                         }
                     }
                 }
 
-                // tab nav
-                event::KeyCode::Left | KeyCode::Char('h') => {
+                // tab navigation (start each tab at the first row)
+                KeyCode::Left | KeyCode::Char('h') => {
                     tabmanager.prev_tab();
+                    table_state.select(Some(0));
                 }
-                event::KeyCode::Right | KeyCode::Char('l') => {
+                KeyCode::Right | KeyCode::Char('l') => {
                     tabmanager.next_tab();
+                    table_state.select(Some(0));
                 }
 
                 _ => {}
             }
         }
     }
+
     Ok(())
 }
 
-fn draw(frame: &mut Frame, tabmanager: &TabManager, table_state: &mut TableState) {
-    let [headarea, tabsarea, bodyarea] = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(frame.area());
+/// Number of selectable rows on the given tab.
+fn item_count(tab: usize) -> usize {
+    match tab {
+        0 => CLEANING_OPTIONS.len(),
+        _ => TWEAKS_OPTIONS.len(),
+    }
+}
 
+/// Turn an action's result into one line for the status bar: the success text,
+/// or the error prefixed with "Error:".
+fn result_message(result: Result<String, String>) -> String {
+    match result {
+        Ok(text) => text,
+        Err(text) => format!("Error: {text}"),
+    }
+}
+
+/// Draw one frame: title, tab bar, the active page's table, and a status line.
+fn draw(
+    frame: &mut Frame,
+    tabmanager: &TabManager,
+    table_state: &mut TableState,
+    cleaning_status: &cleaning::CleaningStatus,
+    tweaks_status: &tweaks::TweaksStatus,
+    message: &str,
+) {
+    // Keep a one-column gutter on each side; the whole UI is borderless.
+    let area = frame.area().inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+
+    // Five compact rows: title, separator, tab bar, table, status/hints.
+    let [header, rule, tabbar, body, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+
+    // Title.
     Paragraph::new("PatchKit")
-        .block(Block::bordered().padding(Padding::horizontal(1)))
-        .render(headarea, frame.buffer_mut());
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .render(header, frame.buffer_mut());
 
+    // Separator bar under the title.
+    Paragraph::new("─".repeat(rule.width as usize))
+        .style(Style::default().fg(Color::DarkGray))
+        .render(rule, frame.buffer_mut());
+
+    // Tab bar, with the active tab in the accent colour.
     Tabs::new(
         tabmanager
             .get_tabs()
@@ -142,18 +196,34 @@ fn draw(frame: &mut Frame, tabmanager: &TabManager, table_state: &mut TableState
             .map(|tab| tab.title.as_str())
             .collect::<Vec<_>>(),
     )
-    .style(Style::default().fg(Color::Gray))
+    .style(Style::default().fg(Color::DarkGray))
     .highlight_style(
         Style::default()
-            .fg(Color::Magenta)
+            .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     )
+    // No padding, so the first tab lines up with the title and the table.
+    .padding("", "")
+    .divider("   ")
     .select(tabmanager.get_selection())
-    .render(tabsarea, frame.buffer_mut());
+    .render(tabbar, frame.buffer_mut());
 
+    // Body: the table of the currently selected tab.
     match tabmanager.get_selection() {
-        0 => pages::cleaning::draw(frame, bodyarea, table_state),
-        1 => pages::tweaks::draw(frame, bodyarea, table_state),
+        0 => pages::cleaning::draw(frame, body, table_state, cleaning_status),
+        1 => pages::tweaks::draw(frame, body, table_state, tweaks_status),
         _ => {}
     }
+
+    // Status line: the last action's message on the left, key hints on the right.
+    let [message_area, hints_area] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(KEY_HINTS.chars().count() as u16),
+    ])
+    .areas(footer);
+
+    Paragraph::new(message).render(message_area, frame.buffer_mut());
+    Paragraph::new(KEY_HINTS)
+        .style(Style::default().fg(Color::DarkGray))
+        .render(hints_area, frame.buffer_mut());
 }
