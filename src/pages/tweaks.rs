@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::data::options::TWEAKS_OPTIONS;
+use crate::theme;
 use crate::tools::tweaks::{self, TweaksStatus};
 
 /// Render the Tweaks table from the cached `status`.
@@ -26,8 +27,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
 
             Row::new(vec![
                 Cell::from(*name),
-                Cell::from(*description),
-                Cell::from(value),
+                Cell::from(*description).style(theme::dim()),
+                super::status_cell(value),
             ])
         })
         .collect::<Vec<_>>();

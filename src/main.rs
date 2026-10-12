@@ -1,21 +1,20 @@
 //! PatchKit — a small Windows cleanup and tweaks TUI.
 //!
 //! This is the entry point. It builds the tab list, runs the event loop
-//! (draw a frame, wait for a key, handle it), and lays out the window: a
-//! title bar, a tab bar, the active page's table, and a one-line status bar.
+//! (draw a frame, wait for a key, handle it), and lays out the window.
 
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint, Layout, Margin},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Layout, Margin},
     widgets::{Paragraph, TableState, Tabs, Widget},
 };
 mod data;
 mod pages;
 mod sys;
 mod tabs;
+mod theme;
 mod tools;
 use tabs::TabManager;
 
@@ -24,6 +23,8 @@ use crate::tools::{cleaning, tweaks};
 
 /// Key hints shown at the bottom-right of the window.
 const KEY_HINTS: &str = "↑↓ move   ⏎ run   ←→ tabs   q quit";
+/// Short tagline shown at the top-right.
+const TAGLINE: &str = "cleanup & tweaks";
 
 /// Entry point: register the tabs, start the terminal, run the app, then make
 /// sure the terminal is restored even if the app exits early.
@@ -149,7 +150,8 @@ fn result_message(result: Result<String, String>) -> String {
     }
 }
 
-/// Draw one frame: title, tab bar, the active page's table, and a status line.
+/// Draw one frame: title bar, separator, tab bar, the active page's table, and
+/// the status bar.
 fn draw(
     frame: &mut Frame,
     tabmanager: &TabManager,
@@ -158,14 +160,22 @@ fn draw(
     tweaks_status: &tweaks::TweaksStatus,
     message: &str,
 ) {
-    // Keep a one-column gutter on each side; the whole UI is borderless.
+    // Leave a gutter so content is not flush against the terminal edges.
     let area = frame.area().inner(Margin {
-        horizontal: 1,
+        horizontal: 2,
         vertical: 0,
     });
 
-    // Five compact rows: title, separator, tab bar, table, status/hints.
-    let [header, rule, tabbar, body, footer] = Layout::vertical([
+    // Rows: title, separator, tab bar, a spacer, the table, the status bar.
+    let [
+        title_area,
+        rule_area,
+        tab_area,
+        _gap,
+        body_area,
+        status_area,
+    ] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -174,19 +184,24 @@ fn draw(
     ])
     .areas(area);
 
-    // Title.
+    // Title bar: the app name on the left, a tagline on the right.
+    let [name_area, tagline_area] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(TAGLINE.chars().count() as u16),
+    ])
+    .areas(title_area);
     Paragraph::new("PatchKit")
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .render(header, frame.buffer_mut());
+        .style(theme::title())
+        .render(name_area, frame.buffer_mut());
+    Paragraph::new(TAGLINE)
+        .alignment(Alignment::Right)
+        .style(theme::dim())
+        .render(tagline_area, frame.buffer_mut());
 
     // Separator bar under the title.
-    Paragraph::new("─".repeat(rule.width as usize))
-        .style(Style::default().fg(Color::DarkGray))
-        .render(rule, frame.buffer_mut());
+    Paragraph::new("─".repeat(rule_area.width as usize))
+        .style(theme::dim())
+        .render(rule_area, frame.buffer_mut());
 
     // Tab bar, with the active tab in the accent colour.
     Tabs::new(
@@ -196,34 +211,31 @@ fn draw(
             .map(|tab| tab.title.as_str())
             .collect::<Vec<_>>(),
     )
-    .style(Style::default().fg(Color::DarkGray))
-    .highlight_style(
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )
-    // No padding, so the first tab lines up with the title and the table.
+    .style(theme::tab())
+    .highlight_style(theme::tab_active())
     .padding("", "")
     .divider("   ")
     .select(tabmanager.get_selection())
-    .render(tabbar, frame.buffer_mut());
+    .render(tab_area, frame.buffer_mut());
 
     // Body: the table of the currently selected tab.
     match tabmanager.get_selection() {
-        0 => pages::cleaning::draw(frame, body, table_state, cleaning_status),
-        1 => pages::tweaks::draw(frame, body, table_state, tweaks_status),
+        0 => pages::cleaning::draw(frame, body_area, table_state, cleaning_status),
+        1 => pages::tweaks::draw(frame, body_area, table_state, tweaks_status),
         _ => {}
     }
 
-    // Status line: the last action's message on the left, key hints on the right.
+    // Status bar: the last action's message on the left, key hints on the
+    // right. Two extra columns keep the message from running into the hints.
     let [message_area, hints_area] = Layout::horizontal([
         Constraint::Min(0),
-        Constraint::Length(KEY_HINTS.chars().count() as u16),
+        Constraint::Length(KEY_HINTS.chars().count() as u16 + 2),
     ])
-    .areas(footer);
+    .areas(status_area);
 
     Paragraph::new(message).render(message_area, frame.buffer_mut());
     Paragraph::new(KEY_HINTS)
-        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Right)
+        .style(theme::dim())
         .render(hints_area, frame.buffer_mut());
 }
