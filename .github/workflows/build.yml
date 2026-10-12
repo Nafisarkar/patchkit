@@ -1,0 +1,45 @@
+name: Build and release
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# Needed so the release step can create/update a GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # PatchKit is Windows-only (Win32 APIs), so always build on Windows.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchkit
+          path: target/release/patchkit.exe
+
+      # Keep one rolling "latest" release up to date on every push.
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: |
+            Automated build of `${{ github.ref_name }}` at ${{ github.sha }}.
+          files: target/release/patchkit.exe
