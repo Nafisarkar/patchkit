@@ -8,9 +8,13 @@ use ratatui::{
 };
 mod data;
 mod pages;
+mod sys;
 mod tab;
 mod tab_manager;
+mod tools;
 use tab_manager::TabManager;
+
+use crate::tools::recycle::{clean_user_temp, clean_windows_temp, clear_recycle_bin};
 
 fn main() -> Result<()> {
     let mut manager = TabManager::new();
@@ -73,13 +77,13 @@ fn run(
                         if let Some(index) = table_state.selected() {
                             match index {
                                 0 => {
-                                    println!("Clean Temp");
+                                    let _ = clear_recycle_bin();
                                 }
                                 1 => {
-                                    println!("Clean Cache");
+                                    let _ = clean_windows_temp();
                                 }
                                 2 => {
-                                    println!("Clean Recycle Bin");
+                                    let _ = clean_user_temp();
                                 }
                                 _ => {}
                             }
