@@ -57,10 +57,10 @@ pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows:
     frame.render_stateful_widget(list, list_area, state);
 }
 
-/// Build the shared table row: badged name, dim description, status cell.
+/// Build the shared table row: marked name, dim description, status cell.
 pub fn option_row(name: &str, description: &str, needs_admin: bool, value: &str) -> Row<'static> {
     Row::new(vec![
-        // Rows that need administrator rights get a purple badge.
+        // Rows that need administrator rights get bold magenta text.
         Cell::from(name.to_string()).style(theme::admin_row(needs_admin)),
         Cell::from(description.to_string()).style(theme::dim()),
         status_cell(value),

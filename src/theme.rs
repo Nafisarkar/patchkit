@@ -15,10 +15,8 @@ pub const ERROR: Color = Color::Rgb(231, 130, 132);
 const SELECTED_BG: Color = Color::Rgb(43, 49, 70);
 /// Foreground of the selected table row.
 const SELECTED_FG: Color = Color::Rgb(205, 214, 244);
-/// Background of the admin badge on rows needing administrator rights.
-const ADMIN_BG: Color = Color::Rgb(202, 158, 230);
-/// Foreground of the admin badge (dark, for contrast on the purple).
-const ADMIN_FG: Color = Color::Rgb(30, 32, 48);
+/// Foreground of the admin marker on rows needing administrator rights.
+const ADMIN_FG: Color = Color::Rgb(255, 0, 255);
 
 /// App title.
 pub fn title() -> Style {
@@ -55,12 +53,12 @@ pub fn selected() -> Style {
     Style::default().bg(SELECTED_BG).fg(SELECTED_FG)
 }
 
-/// Style for a row name: a purple badge when the row needs administrator
-/// rights, default otherwise.
+/// Style for a row name: bold magenta text when the row needs administrator
+/// rights (no background fill, so the selection highlight stays clean),
+/// default otherwise.
 pub fn admin_row(needs_admin: bool) -> Style {
     if needs_admin {
         Style::default()
-            .bg(ADMIN_BG)
             .fg(ADMIN_FG)
             .add_modifier(Modifier::BOLD)
     } else {

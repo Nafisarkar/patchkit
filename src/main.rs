@@ -22,9 +22,9 @@ use tabs::TabManager;
 use crate::data::options::{CLEANING_OPTIONS, TWEAKS_OPTIONS};
 use crate::tools::{cleaning, tweaks};
 
-/// Key hints shown at the bottom-right of the window. "purple" refers to the
+/// Key hints shown at the bottom-right of the window. "magenta" refers to the
 /// highlighted rows: they need administrator rights.
-const KEY_HINTS: &str = "↑↓ move · Enter run · ←→ tabs · q quit · purple = admin";
+const KEY_HINTS: &str = "↑↓ move · Enter run · ←→ tabs · q quit · magenta = admin";
 /// Short tagline shown at the top-right.
 const TAGLINE: &str = "cleanup & tweaks toolbox";
 /// App version, taken from Cargo.toml at compile time.
