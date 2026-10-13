@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 36] = [
+pub static STORE_OPTIONS: [StoreApp; 37] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -343,6 +343,11 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         "Oxdm",
         "Download manager",
         "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
+    ),
+    StoreApp::new(
+        "qBittorrent",
+        "Open-source BitTorrent client",
+        "https://github.com/qbittorrent/qBittorrent/releases/latest/download/qbittorrent_*_x64_setup.exe",
     ),
     StoreApp::new(
         "WinRAR",

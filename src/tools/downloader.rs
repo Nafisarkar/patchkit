@@ -213,13 +213,15 @@ fn href_matching<'a>(listing: &'a str, pattern: &str) -> Option<&'a str> {
         .find(|href| glob_match(pattern, href.rsplit('/').next().unwrap_or("")))
 }
 
-/// First `browser_download_url` in a release JSON whose file name matches the
-/// `*`/`?` glob `pattern`. The JSON is usually minified onto one line.
+/// The newest release asset whose file name matches the `*`/`?` glob `pattern`.
+/// When several match, the shortest name wins — the plain build rather than a
+/// `-v3`/`-lt20`/CLI variant. The JSON is usually minified onto one line.
 fn asset_url_in(json: &str, pattern: &str) -> Option<String> {
     json.split("\"browser_download_url\":")
         .skip(1)
         .filter_map(|rest| rest.trim_start().strip_prefix('"')?.split('"').next())
-        .find(|url| glob_match(pattern, url.rsplit('/').next().unwrap_or("")))
+        .filter(|url| glob_match(pattern, url.rsplit('/').next().unwrap_or("")))
+        .min_by_key(|url| url.rsplit('/').next().unwrap_or("").len())
         .map(str::to_string)
 }
 
@@ -313,6 +315,18 @@ mod tests {
         assert!(is_archive("app.7z") && is_archive("app.ZIP") && is_archive("a.tar.gz"));
         assert!(is_installer("setup.exe") && is_installer("setup.msi"));
         assert!(!is_archive("readme.txt") && !is_installer("readme.txt"));
+    }
+
+    #[test]
+    fn asset_url_in_prefers_the_shortest_name() {
+        let json = concat!(
+            r#"{"assets":[{"browser_download_url":"https://example.com/qbittorrent_5.2.4_lt20_x64_setup.exe"},"#,
+            r#"{"browser_download_url":"https://example.com/qbittorrent_5.2.4_x64_setup.exe"}]}"#,
+        );
+        assert_eq!(
+            asset_url_in(json, "qbittorrent_*_x64_setup.exe").as_deref(),
+            Some("https://example.com/qbittorrent_5.2.4_x64_setup.exe")
+        );
     }
 
     #[test]
