@@ -63,6 +63,87 @@ pub fn wallpaper_compression_set_max() -> Result<String, String> {
     Ok("wallpaper compression disabled (restart to apply)".to_string())
 }
 
+// ----------------------------------------------------------------- remove preinstalled apps
+
+const PREINSTALLED_APPS: [&str; 18] = [
+    "Microsoft.3DBuilder",
+    "Microsoft.BingWeather",
+    "Microsoft.GetHelp",
+    "Microsoft.Getstarted",
+    "Microsoft.Microsoft3DViewer",
+    "Microsoft.MicrosoftOfficeHub",
+    "Microsoft.MicrosoftSolitaireCollection",
+    "Microsoft.MSPaint",
+    "Microsoft.Copilot",
+    "Microsoft.MixedReality.Portal",
+    "MicrosoftTeams",
+    "Microsoft.Todos",
+    "Microsoft.Wallet",
+    "Microsoft.People",
+    "Clipchamp.Clipchamp",
+    "Microsoft.WindowsAlarms",
+    "Microsoft.XboxGamingOverlay",
+    "Microsoft.XboxGameOverlay",
+];
+
+/// Remove the preinstalled store apps for the current user, for all users,
+/// and from the provisioned list (so they do not come back for new users).
+/// Requires administrator rights, and may take a while.
+pub fn remove_preinstalled_apps() -> Result<String, String> {
+    if !sys::is_admin() {
+        return Err(
+            "administrator rights required — restart PatchKit as administrator".to_string(),
+        );
+    }
+
+    let names = PREINSTALLED_APPS
+        .iter()
+        .map(|app| format!("'{app}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Ask which of the apps are installed first, so the result only lists
+    // apps that were actually present. `-Name` does not take an array on
+    // Windows PowerShell 5.1, so query one app at a time.
+    let out = sys::powershell(&format!(
+        "ForEach($app in @({names})) {{ \
+            (Get-AppxPackage -Name $app -ErrorAction SilentlyContinue).Name \
+        }}"
+    ))?;
+    let installed: Vec<&str> = out
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if installed.is_empty() {
+        return Ok("no preinstalled apps were found".to_string());
+    }
+
+    // One PowerShell run does all three passes. Errors are silenced so one
+    // locked or absent app does not abort the rest; some apps only fully
+    // disappear after a restart.
+    let script = format!(
+        "$appname = @({names})
+ForEach($app in $appname) {{
+    Get-AppxPackage -Name $app | Remove-AppxPackage -ErrorAction SilentlyContinue
+}}
+ForEach($app in $appname) {{
+    Get-AppxPackage -AllUsers -Name $app | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+}}
+ForEach($app in $appname) {{
+    Get-AppxProvisionedPackage -Online |
+        Where-Object {{ $_.PackageName -like ('*' + $app + '*') }} |
+        Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+}}"
+    );
+    sys::powershell(&script)?;
+
+    Ok(format!(
+        "removed preinstalled apps: {}",
+        installed.join(", ")
+    ))
+}
+
 // ----------------------------------------------------------------- dark mode
 
 /// True when apps use the dark theme.

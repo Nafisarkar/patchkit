@@ -165,7 +165,7 @@ fn draw(
     // Leave a gutter so content is not flush against the terminal edges.
     let area = frame.area().inner(Margin {
         horizontal: 2,
-        vertical: 0,
+        vertical: 1,
     });
 
     // Rows: title, separator, tab bar, a spacer, the table, the status bar.

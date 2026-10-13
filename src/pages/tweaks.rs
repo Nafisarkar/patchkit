@@ -50,6 +50,7 @@ pub fn activate(index: usize, status: &mut TweaksStatus) -> Result<String, Strin
             status.refresh_activation();
             result
         }
+        5 => tweaks::remove_preinstalled_apps(),
         _ => return Ok(String::new()),
     };
 

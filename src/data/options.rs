@@ -17,7 +17,7 @@ pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str); 5] = [
+pub const TWEAKS_OPTIONS: [(&str, &str); 6] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -34,5 +34,9 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 5] = [
     (
         "Wallpaper compression",
         "Disable the compression of wallpapers in Windows 11/10 to improve quality",
+    ),
+    (
+        "Remove Preinstalled Apps",
+        "Uninstall preinstalled store apps (Solitaire, Copilot, Xbox overlays, etc.) for all users",
     ),
 ];
