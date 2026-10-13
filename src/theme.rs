@@ -27,6 +27,10 @@ pub fn tab_active() -> Style {
     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 
+pub fn heading() -> Style {
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+}
+
 pub fn dim() -> Style {
     Style::default().fg(MUTED)
 }
@@ -48,9 +52,7 @@ pub fn selected() -> Style {
 /// default otherwise.
 pub fn admin_row(needs_admin: bool) -> Style {
     if needs_admin {
-        Style::default()
-            .fg(ADMIN_FG)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(ADMIN_FG).add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     }

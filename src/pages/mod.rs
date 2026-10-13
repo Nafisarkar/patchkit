@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Cell, Paragraph, Row, Table, TableState, Widget},
 };
 
-use crate::data::options::{CLEANING_OPTIONS, STORE_OPTIONS, TWEAKS_OPTIONS};
+use crate::data::options::{CLEANING_OPTIONS, STORE_CATEGORIES, TWEAKS_OPTIONS};
 use crate::theme;
 
 /// Width of the status column. Also used to right-align its text, so its right
@@ -40,7 +40,12 @@ pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows:
         .iter()
         .map(|(name, ..)| name.chars().count())
         .chain(TWEAKS_OPTIONS.iter().map(|(name, ..)| name.chars().count()))
-        .chain(STORE_OPTIONS.iter().map(|app| app.name.chars().count()))
+        .chain(
+            STORE_CATEGORIES
+                .iter()
+                .flat_map(|category| category.apps)
+                .map(|app| app.name.chars().count()),
+        )
         .max()
         .unwrap_or(22) as u16;
     let widths = [

@@ -245,199 +245,240 @@ impl StoreApp {
     }
 }
 
-/// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
-/// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 38] = [
-    StoreApp::new(
-        "VSCode",
-        "Visual Studio Code — Microsoft's code editor",
-        "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
-    ),
-    StoreApp::new(
-        "Zed",
-        "Fast, multiplayer code editor",
-        "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
-    ),
-    StoreApp::new(
-        "Git",
-        "Git for Windows",
-        "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
-    ),
-    StoreApp::new(
-        "GitHub CLI",
-        "GitHub's official command-line tool (gh)",
-        "https://github.com/cli/cli/releases/latest/download/gh_*_windows_amd64.msi",
-    ),
-    StoreApp::new(
-        "Node",
-        "Node.js JavaScript runtime",
-        "https://nodejs.org/dist/latest/node-v*-x64.msi",
-    ),
-    StoreApp::new(
-        "Bun",
-        "Bun JavaScript runtime and toolkit",
-        "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
-    ),
-    StoreApp::new(
-        "Uv",
-        "Fast Python package manager",
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
-    ),
-    StoreApp::with_args(
-        "Rust",
-        "Rust toolchain installer (rustup)",
-        "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
-        &["-y"],
-    ),
-    StoreApp::new(
-        "Chrome",
-        "Google Chrome browser",
-        "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
-    ),
-    StoreApp::new(
-        "Brave",
-        "Privacy-focused web browser",
-        "https://github.com/brave/brave-browser/releases/latest/download/BraveBrowserStandaloneSilentSetup.exe",
-    ),
-    StoreApp::new(
-        "LibreWolf",
-        "Privacy-hardened Firefox fork",
-        "https://dl.librewolf.net/librewolf/157.0.1-1/librewolf-157.0.1-1-windows-x86_64-setup.exe",
-    ),
-    StoreApp::new(
-        "Zen",
-        "Calm, Firefox-based browser",
-        "https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe",
-    ),
-    StoreApp::new(
-        "Helium",
-        "Helium — private, fast web browser",
-        "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
-    ),
-    StoreApp::new(
-        "Mpv",
-        "Media player",
-        "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
-    ),
-    StoreApp::new(
-        "VLC",
-        "Open-source media player",
-        "https://get.videolan.org/vlc/last/win64/vlc-*-win64.exe",
-    ),
-    StoreApp::new(
-        "OBS Studio",
-        "Screen recording and live streaming",
-        "https://github.com/obsproject/obs-studio/releases/latest/download/OBS-Studio-*-Windows-x64-Installer.exe",
-    ),
-    StoreApp::new(
-        "Discord",
-        "Official Discord client",
-        "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64",
-    ),
-    StoreApp::new(
-        "Dorion",
-        "Lightweight Discord client",
-        "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
-    ),
-    StoreApp::new(
-        "LocalSend",
-        "Share files with nearby devices",
-        "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
-    ),
-    StoreApp::new(
-        "Oxdm",
-        "Download manager",
-        "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
-    ),
-    StoreApp::new(
-        "qBittorrent",
-        "Open-source BitTorrent client",
-        "https://github.com/qbittorrent/qBittorrent/releases/latest/download/qbittorrent_*_x64_setup.exe",
-    ),
-    StoreApp::new(
-        "WinRAR",
-        "Archive manager",
-        "https://www.rarlab.com/rar/winrar-x64-723.exe",
-    ),
-    StoreApp::with_args(
-        "Bulk Crap Uninstaller",
-        "Bulk uninstaller for Windows",
-        "https://github.com/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest/download/BCUninstaller_*_setup.exe",
-        &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-    ),
-    StoreApp::new(
-        "LightBulb",
-        "Reduces eye strain by adjusting screen gamma",
-        "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
-    ),
-    StoreApp::new(
-        "Steam",
-        "Game store and launcher",
-        "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
-    ),
-    StoreApp::new(
-        "PhotoCraft",
-        "Open-source image editor",
-        "https://github.com/storytold/photocraft/releases/latest/download/photocraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "VectorCraft",
-        "Open-source vector illustration",
-        "https://github.com/storytold/vectorcraft/releases/latest/download/vectorcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "FilmCraft",
-        "Open-source video editor",
-        "https://github.com/storytold/filmcraft/releases/latest/download/filmcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "LightCraft",
-        "Open-source photo library and raw developer",
-        "https://github.com/storytold/lightcraft/releases/latest/download/lightcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "PdfCraft",
-        "Open-source PDF workbench",
-        "https://github.com/storytold/pdfcraft/releases/latest/download/pdfcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "EffectCraft",
-        "Open-source motion graphics and VFX",
-        "https://github.com/storytold/effectcraft/releases/latest/download/effectcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "DesignCraft",
-        "Open-source page layout and publishing",
-        "https://github.com/storytold/designcraft/releases/latest/download/designcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "FigCraft",
-        "Open-source interface design tool",
-        "https://github.com/storytold/figcraft/releases/latest/download/figcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "WordCraft",
-        "Open-source word processor",
-        "https://github.com/storytold/wordcraft/releases/latest/download/wordcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "SoundCraft",
-        "Open-source digital audio workstation",
-        "https://github.com/storytold/soundcraft/releases/latest/download/soundcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "DeckCraft",
-        "Open-source presentation app",
-        "https://github.com/storytold/deckcraft/releases/latest/download/deckcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "CADCraft",
-        "Open-source CAD and drafting",
-        "https://github.com/storytold/cadcraft/releases/latest/download/cadcraft-*-windows-x64.msi",
-    ),
-    StoreApp::new(
-        "GridCraft",
-        "Open-source spreadsheets and data analysis",
-        "https://github.com/storytold/gridcraft/releases/latest/download/gridcraft-*-windows-x64.msi",
-    ),
+/// A group of Store apps, shown under a header on the Store tab.
+pub struct StoreCategory {
+    /// Header text, e.g. "Multimedia".
+    pub title: &'static str,
+    /// The apps in this category, in display order.
+    pub apps: &'static [StoreApp],
+}
+
+/// The Store apps, grouped by category in display order. Add a `StoreApp` to a
+/// category to add an app; nothing else needs wiring up.
+pub static STORE_CATEGORIES: [StoreCategory; 7] = [
+    StoreCategory {
+        title: "Editors & dev tools",
+        apps: &[
+            StoreApp::new(
+                "VSCode",
+                "Visual Studio Code — Microsoft's code editor",
+                "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
+            ),
+            StoreApp::new(
+                "Zed",
+                "Fast, multiplayer code editor",
+                "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
+            ),
+            StoreApp::new(
+                "Git",
+                "Git for Windows",
+                "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
+            ),
+            StoreApp::new(
+                "GitHub CLI",
+                "GitHub's official command-line tool (gh)",
+                "https://github.com/cli/cli/releases/latest/download/gh_*_windows_amd64.msi",
+            ),
+            StoreApp::new(
+                "Node",
+                "Node.js JavaScript runtime",
+                "https://nodejs.org/dist/latest/node-v*-x64.msi",
+            ),
+            StoreApp::new(
+                "Bun",
+                "Bun JavaScript runtime and toolkit",
+                "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
+            ),
+            StoreApp::new(
+                "Uv",
+                "Fast Python package manager",
+                "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
+            ),
+            StoreApp::with_args(
+                "Rust",
+                "Rust toolchain installer (rustup)",
+                "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
+                &["-y"],
+            ),
+        ],
+    },
+    StoreCategory {
+        title: "Browsers",
+        apps: &[
+            StoreApp::new(
+                "Chrome",
+                "Google Chrome browser",
+                "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
+            ),
+            StoreApp::new(
+                "Brave",
+                "Privacy-focused web browser",
+                "https://github.com/brave/brave-browser/releases/latest/download/BraveBrowserStandaloneSilentSetup.exe",
+            ),
+            StoreApp::new(
+                "LibreWolf",
+                "Privacy-hardened Firefox fork",
+                "https://dl.librewolf.net/librewolf/157.0.1-1/librewolf-157.0.1-1-windows-x86_64-setup.exe",
+            ),
+            StoreApp::new(
+                "Zen",
+                "Calm, Firefox-based browser",
+                "https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe",
+            ),
+            StoreApp::new(
+                "Helium",
+                "Helium — private, fast web browser",
+                "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
+            ),
+        ],
+    },
+    StoreCategory {
+        title: "Multimedia",
+        apps: &[
+            StoreApp::new(
+                "Mpv",
+                "Media player",
+                "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
+            ),
+            StoreApp::new(
+                "VLC",
+                "Open-source media player",
+                "https://get.videolan.org/vlc/last/win64/vlc-*-win64.exe",
+            ),
+            StoreApp::new(
+                "OBS Studio",
+                "Screen recording and live streaming",
+                "https://github.com/obsproject/obs-studio/releases/latest/download/OBS-Studio-*-Windows-x64-Installer.exe",
+            ),
+        ],
+    },
+    StoreCategory {
+        title: "Communication",
+        apps: &[
+            StoreApp::new(
+                "Discord",
+                "Official Discord client",
+                "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64",
+            ),
+            StoreApp::new(
+                "Dorion",
+                "Lightweight Discord client",
+                "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
+            ),
+            StoreApp::new(
+                "LocalSend",
+                "Share files with nearby devices",
+                "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
+            ),
+        ],
+    },
+    StoreCategory {
+        title: "Utilities",
+        apps: &[
+            StoreApp::new(
+                "Oxdm",
+                "Download manager",
+                "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
+            ),
+            StoreApp::new(
+                "qBittorrent",
+                "Open-source BitTorrent client",
+                "https://github.com/qbittorrent/qBittorrent/releases/latest/download/qbittorrent_*_x64_setup.exe",
+            ),
+            StoreApp::new(
+                "WinRAR",
+                "Archive manager",
+                "https://www.rarlab.com/rar/winrar-x64-723.exe",
+            ),
+            StoreApp::with_args(
+                "Bulk Crap Uninstaller",
+                "Bulk uninstaller for Windows",
+                "https://github.com/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest/download/BCUninstaller_*_setup.exe",
+                &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+            ),
+            StoreApp::new(
+                "LightBulb",
+                "Reduces eye strain by adjusting screen gamma",
+                "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
+            ),
+        ],
+    },
+    StoreCategory {
+        title: "Games",
+        apps: &[StoreApp::new(
+            "Steam",
+            "Game store and launcher",
+            "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
+        )],
+    },
+    StoreCategory {
+        title: "Creative",
+        apps: &[
+            StoreApp::new(
+                "PhotoCraft",
+                "Open-source image editor",
+                "https://github.com/storytold/photocraft/releases/latest/download/photocraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "VectorCraft",
+                "Open-source vector illustration",
+                "https://github.com/storytold/vectorcraft/releases/latest/download/vectorcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "FilmCraft",
+                "Open-source video editor",
+                "https://github.com/storytold/filmcraft/releases/latest/download/filmcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "LightCraft",
+                "Open-source photo library and raw developer",
+                "https://github.com/storytold/lightcraft/releases/latest/download/lightcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "PdfCraft",
+                "Open-source PDF workbench",
+                "https://github.com/storytold/pdfcraft/releases/latest/download/pdfcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "EffectCraft",
+                "Open-source motion graphics and VFX",
+                "https://github.com/storytold/effectcraft/releases/latest/download/effectcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "DesignCraft",
+                "Open-source page layout and publishing",
+                "https://github.com/storytold/designcraft/releases/latest/download/designcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "FigCraft",
+                "Open-source interface design tool",
+                "https://github.com/storytold/figcraft/releases/latest/download/figcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "WordCraft",
+                "Open-source word processor",
+                "https://github.com/storytold/wordcraft/releases/latest/download/wordcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "SoundCraft",
+                "Open-source digital audio workstation",
+                "https://github.com/storytold/soundcraft/releases/latest/download/soundcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "DeckCraft",
+                "Open-source presentation app",
+                "https://github.com/storytold/deckcraft/releases/latest/download/deckcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "CADCraft",
+                "Open-source CAD and drafting",
+                "https://github.com/storytold/cadcraft/releases/latest/download/cadcraft-*-windows-x64.msi",
+            ),
+            StoreApp::new(
+                "GridCraft",
+                "Open-source spreadsheets and data analysis",
+                "https://github.com/storytold/gridcraft/releases/latest/download/gridcraft-*-windows-x64.msi",
+            ),
+        ],
+    },
 ];

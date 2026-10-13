@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::data::options::StoreApp;
+use crate::data::options::{StoreApp, StoreCategory};
 use crate::sys;
 
 /// 7-Zip console, fetched once because the bundled `tar.exe` can't read `.7z`.
@@ -260,15 +260,20 @@ pub struct StoreStatus {
 }
 
 impl StoreStatus {
-    pub fn new(apps: &[StoreApp]) -> Self {
+    /// Build the status snapshot for the given categories.
+    pub fn new(categories: &[StoreCategory]) -> Self {
         let mut status = Self::default();
-        status.refresh(apps);
+        status.refresh(categories);
         status
     }
 
-    /// Re-check which apps are downloaded.
-    pub fn refresh(&mut self, apps: &[StoreApp]) {
-        self.rows = apps.iter().map(status).collect();
+    /// Re-check which apps are downloaded, in the categories' flat order.
+    pub fn refresh(&mut self, categories: &[StoreCategory]) {
+        self.rows = categories
+            .iter()
+            .flat_map(|category| category.apps)
+            .map(status)
+            .collect();
     }
 
     /// Status text for the row at `index`, or empty if out of range.
