@@ -84,8 +84,8 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 26] = [
         "Denies app location access and switches off the location sensor",
     ),
     (
-        "Store Recommendations",
-        "Toggles recommended Microsoft Store apps in Start menu search results",
+        "Store Suggestions",
+        "Toggles suggested Microsoft Store apps in Start menu search",
     ),
     (
         "Device Companion Apps",

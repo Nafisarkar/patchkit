@@ -34,7 +34,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
                 "Consumer Features" => status.consumer_features.as_str(),
                 "Delivery Optimization" => status.delivery_optimization.as_str(),
                 "Location Tracking" => status.location.as_str(),
-                "Store Recommendations" => status.store_search.as_str(),
+                "Store Suggestions" => status.store_search.as_str(),
                 "Device Companion Apps" => status.device_metadata.as_str(),
                 "Services to Manual" => status.services.as_str(),
                 "Explorer Home & Gallery" => status.explorer_home.as_str(),

@@ -522,27 +522,38 @@ fn store_db_path() -> Option<PathBuf> {
     )
 }
 
-/// True when the Store database is locked for Everyone, hiding the recommended
+/// True when the Store database is locked for Everyone, hiding the suggested
 /// Store apps in Start menu search.
 pub fn store_search_disabled() -> Option<bool> {
-    let out = sys::run("icacls", &[&store_db_path()?.to_string_lossy()]).ok()?;
+    let db = store_db_path()?;
+    // Newer Windows builds no longer ship store.db; nothing to lock.
+    if !db.exists() {
+        return Some(false);
+    }
+    let out = sys::run("icacls", &[&db.to_string_lossy()]).ok()?;
     // The deny ACE shows up as "Everyone:(DENY)(F)" in icacls output.
     Some(out.contains("DENY"))
 }
 
-/// Toggle the recommended Microsoft Store apps in Start menu search results by
+/// Toggle the suggested Microsoft Store apps in Start menu search results by
 /// granting or denying Everyone access to the Store's local database.
 pub fn toggle_store_search() -> Result<String, String> {
     let db = store_db_path()
         .ok_or("could not resolve the Microsoft Store database path")?
         .to_string_lossy()
         .into_owned();
+    if !Path::new(&db).exists() {
+        return Err(
+            "store.db does not exist on this Windows build — nothing to toggle"
+                .to_string(),
+        );
+    }
     if store_search_disabled().unwrap_or(false) {
         sys::run("icacls", &[&db, "/grant", "*S-1-1-0:F"])?;
-        Ok("store search recommendations shown again".to_string())
+        Ok("store suggestions shown again".to_string())
     } else {
         sys::run("icacls", &[&db, "/deny", "*S-1-1-0:F"])?;
-        Ok("store search recommendations hidden".to_string())
+        Ok("store suggestions hidden".to_string())
     }
 }
 
@@ -1076,7 +1087,7 @@ impl TweaksStatus {
         self.delivery_optimization =
             label(delivery_optimization_disabled(), "Disabled", "Enabled");
         self.location = label(location_tracking_enabled(), "On", "Off");
-        self.store_search = label(store_search_disabled(), "Hidden", "Shown");
+        self.store_search = label(store_search_disabled(), "Off", "On");
         self.device_metadata = label(device_metadata_blocked(), "Blocked", "Allowed");
         self.services = label(services_applied(), "Applied", "Default");
         self.explorer_home = label(explorer_home_hidden(), "Hidden", "Shown");
