@@ -47,4 +47,11 @@ impl TabManager {
             }
         }
     }
+
+    /// Select the tab at `index`, ignoring out-of-range values.
+    pub fn select(&mut self, index: usize) {
+        if index < self.titles.len() {
+            self.selection = index;
+        }
+    }
 }
