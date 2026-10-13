@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 29] = [
+pub static STORE_OPTIONS: [StoreApp; 30] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -318,6 +318,11 @@ pub static STORE_OPTIONS: [StoreApp; 29] = [
         "Steam",
         "Game store and launcher",
         "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
+    ),
+    StoreApp::new(
+        "LocalSend",
+        "Share files with nearby devices",
+        "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
     ),
     StoreApp::new(
         "Dorion",
