@@ -36,16 +36,14 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Clea
     super::action_table(frame, area, state, rows);
 }
 
-/// Run the cleaning action for the selected row, then refresh the status.
-pub fn activate(index: usize, status: &mut CleaningStatus) -> Result<String, String> {
-    let result = match index {
-        0 => cleaning::clear_recycle_bin(),
-        1 => cleaning::clean_windows_temp(),
-        2 => cleaning::clean_user_temp(),
-        3 => cleaning::run_disk_cleanup(),
-        _ => return Ok(String::new()),
-    };
-
-    status.refresh();
-    result
+/// The cleaning action behind the selected row; the caller runs it on a
+/// worker thread so the UI keeps animating.
+pub fn action(index: usize) -> Option<fn() -> Result<String, String>> {
+    Some(match index {
+        0 => cleaning::clear_recycle_bin,
+        1 => cleaning::clean_windows_temp,
+        2 => cleaning::clean_user_temp,
+        3 => cleaning::run_disk_cleanup,
+        _ => return None,
+    })
 }

@@ -10,6 +10,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Margin},
     widgets::{Paragraph, TableState, Tabs, Widget},
 };
+use std::time::{Duration, Instant};
 mod data;
 mod pages;
 mod sys;
@@ -53,8 +54,34 @@ fn main() -> Result<()> {
     result
 }
 
-/// The event loop. Draws a frame, blocks until an event, handles key presses,
-/// then loops again. Returns when the user quits.
+/// Spinner frames for the running indicator, advanced by the redraw loop.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// What the status bar shows: either the running indicator of an in-flight
+/// job or the last action's result.
+enum StatusLine<'a> {
+    Running(&'a str),
+    Message(&'a str),
+}
+
+/// A tab action running on a worker thread, so the UI keeps animating while
+/// slow work (activation, appx removal, downloads) completes.
+struct Job {
+    /// Row label shown next to the spinner.
+    label: String,
+    /// When the job started, drives the spinner frame and the elapsed counter.
+    started: Instant,
+    /// The running action's result, ready when `is_finished()` returns true.
+    handle: std::thread::JoinHandle<Result<String, String>>,
+    /// Which tab's status snapshot to refresh when the job finishes.
+    tab: usize,
+    /// Selected row index, needed to spot the slow activation refresh.
+    index: usize,
+}
+
+/// The event loop. Draws a frame, polls events for a short moment, then loops
+/// again — which keeps the running-indicator animating while a job works on
+/// its own thread. Returns when the user quits.
 fn run(
     terminal: &mut DefaultTerminal,
     tabmanager: &mut TabManager,
@@ -67,10 +94,27 @@ fn run(
     let mut message = String::new();
     // A process's elevation never changes after launch, so check it once.
     let is_admin = sys::is_admin();
+    // The action currently running on a worker thread, if any.
+    let mut job: Option<Job> = None;
+    // Set after a first quit press while a job is running.
+    let mut quit_armed = false;
 
     loop {
-        // draw
+        // Compose the running indicator; redrawing advances the spinner.
+        let running = job.as_ref().map(|job| {
+            let frame =
+                SPINNER[(job.started.elapsed().as_millis() / 125) as usize % SPINNER.len()];
+            format!(
+                "{frame} Running: {}… ({}s)",
+                job.label,
+                job.started.elapsed().as_secs()
+            )
+        });
         terminal.draw(|frame| {
+            let status = match running.as_deref() {
+                Some(text) => StatusLine::Running(text),
+                None => StatusLine::Message(&message),
+            };
             draw(
                 frame,
                 tabmanager,
@@ -78,20 +122,32 @@ fn run(
                 &cleaning_status,
                 &tweaks_status,
                 is_admin,
-                &message,
+                status,
             )
         })?;
 
-        // event handler
-        if let Event::Key(key) = event::read()? {
+        // Poll events with a timeout so the spinner keeps animating.
+        if event::poll(Duration::from_millis(125))?
+            && let Event::Key(key) = event::read()?
+        {
             // On Windows crossterm reports both press and release, so ignore
-            // everything that is not a press to avoid handling a key twice.
+            // everything that is not a press.
             if key.kind != event::KeyEventKind::Press {
                 continue;
             }
 
             match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => break,
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    // Quitting kills a still-running worker mid-task, so
+                    // require a second press to confirm.
+                    if job.is_some() && !quit_armed {
+                        quit_armed = true;
+                        message = "a task is still running — press q again to quit anyway"
+                            .to_string();
+                    } else {
+                        break;
+                    }
+                }
 
                 // table navigation
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -107,23 +163,30 @@ fn run(
                     }
                 }
 
-                // run the selected action
+                // start the selected action on a worker thread
                 KeyCode::Enter => {
-                    if let Some(index) = table_state.selected() {
-                        match tabmanager.get_selection() {
-                            0 => {
-                                message = result_message(pages::cleaning::activate(
-                                    index,
-                                    &mut cleaning_status,
-                                ));
-                            }
-                            1 => {
-                                message = result_message(pages::tweaks::activate(
-                                    index,
-                                    &mut tweaks_status,
-                                ));
-                            }
-                            _ => {}
+                    if job.is_none()
+                        && let Some(index) = table_state.selected()
+                    {
+                        let tab = tabmanager.get_selection();
+                        let action = match tab {
+                            0 => pages::cleaning::action(index),
+                            1 => pages::tweaks::action(index),
+                            _ => None,
+                        };
+                        if let Some(action) = action {
+                            quit_armed = false;
+                            let label = match tab {
+                                0 => CLEANING_OPTIONS[index].0,
+                                _ => TWEAKS_OPTIONS[index].0,
+                            };
+                            job = Some(Job {
+                                label: label.to_string(),
+                                started: Instant::now(),
+                                handle: std::thread::spawn(action),
+                                tab,
+                                index,
+                            });
                         }
                     }
                 }
@@ -138,6 +201,27 @@ fn run(
                     table_state.select(Some(0));
                 }
 
+                _ => {}
+            }
+        }
+
+        // Collect finished worker threads and show their result.
+        if job.as_ref().is_some_and(|job| job.handle.is_finished()) {
+            let job = job.take().expect("job just finished");
+            let result = job
+                .handle
+                .join()
+                .unwrap_or_else(|_| Err("worker thread crashed".to_string()));
+            message = result_message(result);
+            quit_armed = false;
+            match job.tab {
+                0 => cleaning_status.refresh(),
+                1 => {
+                    tweaks_status.refresh();
+                    if job.index == 3 {
+                        tweaks_status.refresh_activation();
+                    }
+                }
                 _ => {}
             }
         }
@@ -172,7 +256,7 @@ fn draw(
     cleaning_status: &cleaning::CleaningStatus,
     tweaks_status: &tweaks::TweaksStatus,
     is_admin: bool,
-    message: &str,
+    status: StatusLine,
 ) {
     // Leave a gutter so content is not flush against the terminal edges.
     let area = frame.area().inner(Margin {
@@ -290,14 +374,15 @@ fn draw(
     ])
     .areas(status_area);
 
-    // Successes share the muted chrome colour; errors stand out in red.
-    let message_style = if message.starts_with("Error:") {
-        theme::error()
-    } else {
-        theme::dim()
+    // While a job runs, the spinner text replaces the last message; errors
+    // still stand out in red afterwards.
+    let (text, is_error) = match status {
+        StatusLine::Running(text) => (text, false),
+        StatusLine::Message(text) => (text, text.starts_with("Error:")),
     };
-    Paragraph::new(message)
-        .style(message_style)
+    let style = if is_error { theme::error() } else { theme::dim() };
+    Paragraph::new(text)
+        .style(style)
         .render(message_area, frame.buffer_mut());
     Paragraph::new(KEY_HINTS)
         .alignment(Alignment::Right)
