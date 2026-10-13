@@ -330,6 +330,16 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         "https://github.com/obsproject/obs-studio/releases/latest/download/OBS-Studio-*-Windows-x64-Installer.exe",
     ),
     StoreApp::new(
+        "Dorion",
+        "Lightweight Discord client",
+        "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
+    ),
+    StoreApp::new(
+        "LocalSend",
+        "Share files with nearby devices",
+        "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
+    ),
+    StoreApp::new(
         "oxdm",
         "Download manager",
         "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
@@ -346,24 +356,14 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
     ),
     StoreApp::new(
-        "Steam",
-        "Game store and launcher",
-        "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
-    ),
-    StoreApp::new(
-        "LocalSend",
-        "Share files with nearby devices",
-        "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
-    ),
-    StoreApp::new(
-        "Dorion",
-        "Lightweight Discord client",
-        "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
-    ),
-    StoreApp::new(
         "LightBulb",
         "Reduces eye strain by adjusting screen gamma",
         "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
+    ),
+    StoreApp::new(
+        "Steam",
+        "Game store and launcher",
+        "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
     ),
     StoreApp::new(
         "PhotoCraft",
