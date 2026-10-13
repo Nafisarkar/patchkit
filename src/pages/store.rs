@@ -95,4 +95,28 @@ mod tests {
         // A header row has no action.
         assert!(action(0).is_none());
     }
+
+    #[test]
+    fn draw_renders_the_category_headers() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let status = StoreStatus::new(&STORE_CATEGORIES);
+        let mut state = TableState::default();
+        state.select(Some(1));
+        terminal
+            .draw(|frame| draw(frame, frame.area(), &mut state, &status))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let mut screen = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                screen.push_str(buffer[(x, y)].symbol());
+            }
+            screen.push('\n');
+        }
+        assert!(screen.contains("Editors"), "no Dev tools header:\n{screen}");
+        assert!(screen.contains("Browsers"), "no Browsers header:\n{screen}");
+    }
 }
