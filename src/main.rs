@@ -25,6 +25,8 @@ use crate::tools::{cleaning, tweaks};
 const KEY_HINTS: &str = "↑↓ move   ⏎ run   ←→ tabs   q quit";
 /// Short tagline shown at the top-right.
 const TAGLINE: &str = "cleanup & tweaks";
+/// App version, taken from Cargo.toml at compile time.
+const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 /// Entry point: register the tabs, start the terminal, run the app, then make
 /// sure the terminal is restored even if the app exits early.
@@ -190,7 +192,7 @@ fn draw(
         Constraint::Length(TAGLINE.chars().count() as u16),
     ])
     .areas(title_area);
-    Paragraph::new("PatchKit")
+    Paragraph::new(format!("PatchKit {VERSION}"))
         .style(theme::title())
         .render(name_area, frame.buffer_mut());
     Paragraph::new(TAGLINE)

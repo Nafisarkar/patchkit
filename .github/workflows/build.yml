@@ -3,6 +3,7 @@ name: Build and release
 on:
   push:
     branches: [master]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -33,9 +34,20 @@ jobs:
           name: patchkit
           path: target/release/patchkit.exe
 
+      # Pushing a `v*` tag publishes a versioned release.
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PatchKit ${{ github.ref_name }}
+          body: |
+            PatchKit ${{ github.ref_name }}.
+          files: target/release/patchkit.exe
+
       # Keep one rolling "latest" release up to date on every push.
-      - name: Publish release
-        if: github.event_name != 'pull_request'
+      - name: Publish rolling release
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
