@@ -41,7 +41,7 @@ pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows:
     let action_width = CLEANING_OPTIONS
         .iter()
         .chain(TWEAKS_OPTIONS.iter())
-        .map(|(name, _)| name.chars().count())
+        .map(|(name, ..)| name.chars().count())
         .max()
         .unwrap_or(22) as u16;
     let widths = [

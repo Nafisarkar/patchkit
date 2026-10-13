@@ -15,7 +15,7 @@ use crate::tools::tweaks::{self, TweaksStatus};
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &TweaksStatus) {
     let rows = TWEAKS_OPTIONS
         .iter()
-        .map(|(name, description)| {
+        .map(|(name, description, needs_admin)| {
             // Pick the status text that belongs to this row.
             let value = match *name {
                 "Toggle Dark Mode" => status.dark_mode.as_str(),
@@ -48,7 +48,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
             };
 
             Row::new(vec![
-                Cell::from(*name),
+                // Rows that need administrator rights get a purple badge.
+                Cell::from(*name).style(theme::admin_row(*needs_admin)),
                 Cell::from(*description).style(theme::dim()),
                 super::status_cell(value),
             ])
