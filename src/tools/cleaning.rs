@@ -64,24 +64,39 @@ pub fn preview_recycle_bin() -> Option<String> {
 /// Empty the Recycle Bin and describe what was removed.
 pub fn clear_recycle_bin() -> Result<String, String> {
     let (size, items) = query_recycle_bin()?;
-    // Empty even when the query said empty, in case something landed in the
-    // bin since; on an empty bin the call is a harmless no-op. Emptying is
-    // irreversible, so the result text is the user's only confirmation.
-    unsafe {
+    if items == 0 {
+        // Do not call the shell API on an empty bin: some builds fail it with
+        // a spurious 0x8000FFFF ("catastrophic failure").
+        return Ok("already empty".to_string());
+    }
+    // Emptying is irreversible, so the result text is the user's only
+    // confirmation.
+    let shell_result = unsafe {
         SHEmptyRecycleBinW(
             None,
             None,
             SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
         )
+    };
+    match shell_result {
+        Ok(()) => Ok(format!(
+            "emptied {items} item(s), {} freed",
+            sys::format_bytes(size)
+        )),
+        Err(e) => {
+            // The raw API sometimes fails with 0x8000FFFF even when the bin
+            // is fine; the modern cmdlet usually still works there.
+            sys::powershell("Clear-RecycleBin -Force -ErrorAction Stop").map_err(
+                |fallback| {
+                    format!(
+                        "emptying failed ({e}); fallback failed ({fallback}) — \
+                         the Recycle Bin may be corrupted"
+                    )
+                },
+            )?;
+            Ok("recycle bin emptied (via PowerShell fallback)".to_string())
+        }
     }
-    .map_err(|e| format!("failed to empty the recycle bin: {e}"))?;
-    if items == 0 {
-        return Ok("already empty".to_string());
-    }
-    Ok(format!(
-        "emptied {items} item(s), {} freed",
-        sys::format_bytes(size)
-    ))
 }
 
 // ----------------------------------------------------------------- temp dirs
