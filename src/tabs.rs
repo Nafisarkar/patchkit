@@ -7,7 +7,6 @@ pub struct TabManager {
 }
 
 impl TabManager {
-    /// Create a manager with no tabs, selecting index 0.
     pub fn new() -> Self {
         Self {
             selection: 0,
@@ -15,17 +14,14 @@ impl TabManager {
         }
     }
 
-    /// All tab titles, in display order.
     pub fn titles(&self) -> &[String] {
         &self.titles
     }
 
-    /// Index of the currently selected tab.
     pub fn get_selection(&self) -> usize {
         self.selection
     }
 
-    /// Append a tab with the given title.
     pub fn add_tab(&mut self, title: &str) {
         self.titles.push(title.to_string());
     }

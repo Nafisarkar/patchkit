@@ -15,7 +15,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
     let rows = TWEAKS_OPTIONS
         .iter()
         .map(|(name, description, needs_admin, _)| {
-            // Pick the status text that belongs to this row.
             let value = match *name {
                 "Toggle Dark Mode" => status.dark_mode.as_str(),
                 "Show File Extensions" => status.file_extensions.as_str(),

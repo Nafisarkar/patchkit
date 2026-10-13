@@ -1,11 +1,7 @@
 //! The Cleaning tab: shows what the Recycle Bin and temp folders contain, and
 //! runs the selected cleanup action.
 
-use ratatui::{
-    Frame,
-    layout::Rect,
-    widgets::TableState,
-};
+use ratatui::{Frame, layout::Rect, widgets::TableState};
 
 use crate::data::options::{Action, CLEANING_OPTIONS};
 use crate::tools::cleaning::CleaningStatus;
@@ -15,7 +11,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Clea
     let rows = CLEANING_OPTIONS
         .iter()
         .map(|(name, description, needs_admin, _)| {
-            // Pick the status text that belongs to this row.
             let value = match *name {
                 "Recycle Bin" => status.recycle_bin.as_str(),
                 "Windows Temp" => status.windows_temp.as_str(),

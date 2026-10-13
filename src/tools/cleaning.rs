@@ -111,17 +111,14 @@ fn preview_dir(path: &Path) -> Option<String> {
     Some(format!("{files} · {}", sys::format_bytes(bytes)))
 }
 
-/// Status text for the Windows temp folder.
 fn preview_windows_temp() -> Option<String> {
     preview_dir(&windir().join("Temp"))
 }
 
-/// Status text for the per-user temp folder.
 fn preview_user_temp() -> Option<String> {
     preview_dir(&user_temp_dir())
 }
 
-/// Delete the contents of a temp folder and summarize the result.
 fn clean_dir(path: &Path) -> Result<String, String> {
     Ok(sys::clear_dir(path)?.summary())
 }
@@ -137,7 +134,6 @@ pub fn clean_windows_temp() -> Result<String, String> {
     }
 }
 
-/// Delete the contents of the per-user temp folder.
 pub fn clean_user_temp() -> Result<String, String> {
     clean_dir(&user_temp_dir())
 }
