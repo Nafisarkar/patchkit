@@ -300,6 +300,11 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
                 "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
                 &["-y"],
             ),
+            StoreApp::new(
+                "OpenCode",
+                "AI coding agent (CLI)",
+                "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
+            ),
         ],
     },
     StoreCategory {
