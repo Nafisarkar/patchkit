@@ -16,7 +16,7 @@ const SELECTED_BG: Color = Color::Rgb(43, 49, 70);
 /// Foreground of the selected table row.
 const SELECTED_FG: Color = Color::Rgb(205, 214, 244);
 /// Foreground of the admin marker on rows needing administrator rights.
-const ADMIN_FG: Color = Color::Rgb(255, 0, 255);
+const ADMIN_FG: Color = Color::Rgb(240, 160, 210);
 
 /// App title.
 pub fn title() -> Style {
