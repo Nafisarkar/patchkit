@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 37] = [
+pub static STORE_OPTIONS: [StoreApp; 38] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -328,6 +328,11 @@ pub static STORE_OPTIONS: [StoreApp; 37] = [
         "OBS Studio",
         "Screen recording and live streaming",
         "https://github.com/obsproject/obs-studio/releases/latest/download/OBS-Studio-*-Windows-x64-Installer.exe",
+    ),
+    StoreApp::new(
+        "Discord",
+        "Official Discord client",
+        "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64",
     ),
     StoreApp::new(
         "Dorion",
