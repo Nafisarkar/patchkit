@@ -1,99 +1,179 @@
-//! Backend for the Store tab: resolve and download apps into the user's
-//! Downloads folder.
+//! Backend for the Store tab: download an app from its link and install it.
 //!
-//! For now a store entry is a download, not an install: the resolved file is
-//! saved to `%USERPROFILE%\Downloads`. Downloads use the bundled `curl.exe`,
-//! matching the rest of the app, so no extra dependency is needed.
+//! A store entry is just a name, a description and a link (see
+//! [`crate::data::options::STORE_OPTIONS`]); everything else is generic. The
+//! file is downloaded into `%LOCALAPPDATA%\PatchKit\<name>`, then:
+//!
+//! * an archive (`.zip`, `.7z`, `.tar.*`) is unpacked there — a portable
+//!   install, and
+//! * an installer (`.exe`, `.msi`) is run from there.
+//!
+//! `.zip` and `.tar.*` are unpacked with the `tar.exe` Windows ships. `.7z`
+//! needs the LZMA codec that `tar.exe` lacks, so it uses a `7z`/`7zr`/`7za`
+//! already on `PATH`, or the standalone `7zr.exe` fetched from 7-zip.org once.
+//!
+//! A link may point at a file directly, or at a GitHub
+//! `releases/latest/download/<name>` URL whose file name contains a `*` glob,
+//! in which case the newest matching release asset is resolved first.
 
 use std::path::{Path, PathBuf};
 
+use crate::data::options::StoreApp;
 use crate::sys;
 
 use super::label;
 
-/// GitHub API endpoint for the newest mpv Windows build (shinchiro's
-/// `mpv-winbuild-cmake`). The asset names carry a date and git hash, so the
-/// download URL is resolved from the API instead of being a constant.
-const MPV_RELEASES_API: &str =
-    "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest";
+/// The standalone 7-Zip console, used to unpack `.7z` when 7-Zip isn't on PATH.
+const SEVEN_ZIP_URL: &str = "https://www.7-zip.org/a/7zr.exe";
 
-/// GitHub API endpoint for the newest Dorion release (a lightweight,
-/// customizable Discord client).
-const DORION_RELEASES_API: &str = "https://api.github.com/repos/SpikeHD/Dorion/releases/latest";
-
-/// The user's Downloads folder (`%USERPROFILE%\Downloads`).
-fn downloads_dir() -> Result<PathBuf, String> {
-    let profile =
-        std::env::var_os("USERPROFILE").ok_or("could not find your user profile folder")?;
-    Ok(Path::new(&profile).join("Downloads"))
+/// PatchKit's own folder: `%LOCALAPPDATA%\PatchKit`.
+fn tools_dir() -> Result<PathBuf, String> {
+    let local = std::env::var_os("LocalAppData").ok_or("could not find %LOCALAPPDATA%")?;
+    Ok(Path::new(&local).join("PatchKit"))
 }
 
-/// True for the plain 64-bit mpv build (`mpv-x86_64-<date>-git-<hash>.7z`), and
-/// not the `-v3-` variant or the `-dev-` headers.
-fn is_mpv_asset(file: &str) -> bool {
-    file.starts_with("mpv-x86_64-") && file.ends_with(".7z") && !file.contains("-v3-")
+/// Where an app is downloaded and installed: `%LOCALAPPDATA%\PatchKit\<name>`.
+fn app_dir(name: &str) -> Result<PathBuf, String> {
+    Ok(tools_dir()?.join(name))
 }
 
-/// "In Downloads" / "Not downloaded" for the mpv row.
-fn mpv_downloaded() -> Option<bool> {
-    has_download(is_mpv_asset)
+/// True when the app was installed: its folder exists and has content.
+fn is_installed(name: &str) -> Option<bool> {
+    let dir = app_dir(name).ok()?;
+    let mut entries = std::fs::read_dir(&dir).ok()?;
+    Some(entries.next().is_some())
 }
 
-/// True for the 64-bit Dorion Windows installer
-/// (`Dorion_<version>_x64-setup.exe`), and not the arm64 installer or the
-/// portable zip/msi.
-fn is_dorion_asset(file: &str) -> bool {
-    file.starts_with("Dorion_") && file.ends_with("_x64-setup.exe")
+/// Status text for a store row.
+pub fn status(app: &StoreApp) -> String {
+    label(is_installed(app.name), "Installed", "Not installed")
 }
 
-/// "In Downloads" / "Not downloaded" for the Dorion row.
-fn dorion_downloaded() -> Option<bool> {
-    has_download(is_dorion_asset)
+/// Download `app`'s link and install it, returning a status-bar message.
+pub fn install(app: &StoreApp) -> Result<String, String> {
+    let dir = app_dir(app.name)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+    let url = resolve_link(app.link)?;
+    let file = download(&url, &dir)?;
+    let name = file_name(&file);
+
+    match install_kind(&name) {
+        InstallKind::Portable => {
+            extract(&file, &dir)?;
+            Ok(format!("installed {} ({name})", app.name))
+        }
+        InstallKind::Installer => {
+            run_installer(&file)?;
+            Ok(format!("installed {} (ran {name})", app.name))
+        }
+        InstallKind::File => Ok(format!("downloaded {name} to {}", dir.display())),
+    }
 }
 
-/// Whether the Downloads folder already holds a file matching `want`.
-fn has_download(want: impl Fn(&str) -> bool) -> Option<bool> {
-    let entries = std::fs::read_dir(downloads_dir().ok()?).ok()?;
-    Some(
-        entries
-            .flatten()
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-            .any(|name| want(&name)),
-    )
+/// How a downloaded file should be installed.
+enum InstallKind {
+    /// Unpack into the app folder.
+    Portable,
+    /// Run the downloaded installer.
+    Installer,
+    /// Leave the file in the app folder untouched.
+    File,
 }
 
-/// Download the newest mpv Windows build into the Downloads folder.
-pub fn download_mpv() -> Result<String, String> {
-    download_latest(MPV_RELEASES_API, is_mpv_asset)
+/// Pick the install method from the downloaded file's extension.
+fn install_kind(name: &str) -> InstallKind {
+    let name = name.to_ascii_lowercase();
+    let archive = [
+        ".zip", ".7z", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2",
+    ]
+    .iter()
+    .any(|ext| name.ends_with(ext));
+    if archive {
+        InstallKind::Portable
+    } else if name.ends_with(".exe") || name.ends_with(".msi") {
+        InstallKind::Installer
+    } else {
+        InstallKind::File
+    }
 }
 
-/// Download the newest Dorion Windows installer into the Downloads folder.
-pub fn download_dorion() -> Result<String, String> {
-    download_latest(DORION_RELEASES_API, is_dorion_asset)
+/// Unpack an archive into `dest`.
+fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
+    let name = file_name(archive).to_ascii_lowercase();
+    let archive = archive.to_string_lossy();
+    let dest = dest.to_string_lossy();
+    if name.ends_with(".7z") {
+        let seven_zip = seven_zip()?;
+        sys::run(&seven_zip, &["x", &archive, &format!("-o{dest}"), "-y"])?;
+    } else {
+        // bsdtar detects zip and tarballs from the file's content.
+        sys::run("tar.exe", &["-xf", &archive, "-C", &dest])?;
+    }
+    Ok(())
 }
 
-/// Resolve the newest release asset matching `want` and save it to Downloads.
-fn download_latest(api: &str, want: impl Fn(&str) -> bool) -> Result<String, String> {
-    let url = github_asset_url(api, want)?;
-    let path = download_to_downloads(&url)?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("the file");
-    Ok(format!("downloaded {name} to your Downloads folder"))
+/// A 7-Zip executable: one already on `PATH`, else the standalone `7zr.exe`
+/// fetched once into PatchKit's folder.
+fn seven_zip() -> Result<String, String> {
+    for program in ["7z", "7zr", "7za"] {
+        if let Some(path) = on_path(program) {
+            return Ok(path);
+        }
+    }
+    let tool = tools_dir()?.join("7zr.exe");
+    if !tool.is_file() {
+        let dir = tools_dir()?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        sys::run(
+            "curl.exe",
+            &[
+                "-L",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "-o",
+                &tool.to_string_lossy(),
+                SEVEN_ZIP_URL,
+            ],
+        )?;
+    }
+    Ok(tool.to_string_lossy().into_owned())
 }
 
-/// Download `url` into the Downloads folder, keeping the file name from the URL,
-/// and return the path it was saved to.
-fn download_to_downloads(url: &str) -> Result<PathBuf, String> {
+/// The full path of `program.exe` on `PATH`, if it exists.
+fn on_path(program: &str) -> Option<String> {
+    let exe = format!("{program}.exe");
+    std::env::split_paths(&std::env::var_os("PATH")?).find_map(|dir| {
+        let candidate = dir.join(&exe);
+        candidate
+            .is_file()
+            .then(|| candidate.to_string_lossy().into_owned())
+    })
+}
+
+/// Run a downloaded installer. `.msi` goes through `msiexec`; `.exe` uses the
+/// NSIS `/S` silent flag, which the common one-click installers (NSIS, Tauri)
+/// support. An installer that doesn't understand it simply shows its wizard.
+fn run_installer(file: &Path) -> Result<(), String> {
+    let path = file.to_string_lossy().to_string();
+    if path.to_ascii_lowercase().ends_with(".msi") {
+        sys::run("msiexec.exe", &["/i", &path, "/passive", "/norestart"])?;
+    } else {
+        sys::run(&path, &["/S"])?;
+    }
+    Ok(())
+}
+
+/// Download `url` into `dir`, keeping the file name from the URL.
+fn download(url: &str, dir: &Path) -> Result<PathBuf, String> {
     let name = url
         .rsplit('/')
         .next()
         .filter(|name| !name.is_empty())
-        .ok_or("the download URL has no file name")?;
-    let dir = downloads_dir()?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        .ok_or("the link has no file name")?;
     let dest = dir.join(name);
     sys::run(
         "curl.exe",
@@ -110,12 +190,36 @@ fn download_to_downloads(url: &str) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
-/// Resolve the download URL of the newest release asset whose file name
-/// satisfies `want`, via the GitHub REST API.
-fn github_asset_url(api: &str, want: impl Fn(&str) -> bool) -> Result<String, String> {
-    // The API asks callers to identify themselves; curl's default agent works,
-    // but sending our own keeps the request identifiable.
-    let json = sys::run(
+/// Turn a link into a concrete file URL. A GitHub
+/// `releases/latest/download/<name>` link whose file name contains a `*` glob
+/// is resolved to the newest matching release asset; other links are returned
+/// unchanged.
+fn resolve_link(link: &str) -> Result<String, String> {
+    if !link.contains('*') {
+        return Ok(link.to_string());
+    }
+    let (repo, pattern) = github_latest_pattern(link).ok_or(
+        "a link with a '*' must look like \
+         https://github.com/<owner>/<repo>/releases/latest/download/<name>",
+    )?;
+    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let json = fetch(&api)?;
+    asset_url_in(&json, |file| glob_match(pattern, file))
+        .ok_or_else(|| format!("no file matched '{pattern}' in the newest {repo} release"))
+}
+
+/// Split a GitHub `releases/latest/download/<pattern>` link into `owner/repo`
+/// and the `<pattern>` file name.
+fn github_latest_pattern(link: &str) -> Option<(&str, &str)> {
+    let rest = link.strip_prefix("https://github.com/")?;
+    let (repo, pattern) = rest.split_once("/releases/latest/download/")?;
+    let valid = repo.contains('/') && !pattern.is_empty() && !pattern.contains('/');
+    valid.then_some((repo, pattern))
+}
+
+/// Fetch a URL's text output (used for the GitHub API).
+fn fetch(url: &str) -> Result<String, String> {
+    sys::run(
         "curl.exe",
         &[
             "-L",
@@ -124,10 +228,9 @@ fn github_asset_url(api: &str, want: impl Fn(&str) -> bool) -> Result<String, St
             "--fail",
             "-H",
             "User-Agent: PatchKit",
-            api,
+            url,
         ],
-    )?;
-    asset_url_in(&json, want).ok_or_else(|| "no matching file in the latest release".to_string())
+    )
 }
 
 /// Pull the first `browser_download_url` out of a GitHub release JSON whose file
@@ -159,27 +262,64 @@ fn asset_url_in(json: &str, want: impl Fn(&str) -> bool) -> Option<String> {
     None
 }
 
-/// Snapshot of the Store tab's "Status" column.
+/// Case-insensitive glob match supporting `*` (any run) and `?` (one character).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.to_ascii_lowercase().chars().collect();
+    let text: Vec<char> = text.to_ascii_lowercase().chars().collect();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star, mut mark) = (None, 0);
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == '?' || pattern[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(star_index) = star {
+            pi = star_index + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == '*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+/// File name of a path, for display and extension checks.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Cached "Status" column for the Store tab.
 #[derive(Default)]
 pub struct StoreStatus {
-    /// Text for the "mpv" row.
-    pub mpv: String,
-    /// Text for the "Dorion" row.
-    pub dorion: String,
+    rows: Vec<String>,
 }
 
 impl StoreStatus {
-    /// Build a status snapshot with the current Downloads contents filled in.
-    pub fn new() -> Self {
+    /// Build the status snapshot for the given apps.
+    pub fn new(apps: &[StoreApp]) -> Self {
         let mut status = Self::default();
-        status.refresh();
+        status.refresh(apps);
         status
     }
 
-    /// Re-check which store downloads are already present.
-    pub fn refresh(&mut self) {
-        self.mpv = label(mpv_downloaded(), "In Downloads", "Not downloaded");
-        self.dorion = label(dorion_downloaded(), "In Downloads", "Not downloaded");
+    /// Re-check which apps are installed.
+    pub fn refresh(&mut self, apps: &[StoreApp]) {
+        self.rows = apps.iter().map(status).collect();
+    }
+
+    /// Status text for the row at `index`, or empty if out of range.
+    pub fn value(&self, index: usize) -> &str {
+        self.rows.get(index).map(String::as_str).unwrap_or("")
     }
 }
 
@@ -188,42 +328,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn asset_url_in_picks_the_plain_build() {
-        // The release lists the `-dev-` headers, a `-v3-` variant and the plain
-        // build; only the plain 64-bit one should be chosen.
-        //
-        // The JSON is minified onto one line, exactly as curl.exe receives it
-        // from the GitHub API — a line-based parse would find nothing.
+    fn glob_match_handles_wildcards() {
+        assert!(glob_match(
+            "mpv-x86_64-*.7z",
+            "mpv-x86_64-20261013-git-abc.7z"
+        ));
+        assert!(glob_match(
+            "Dorion_*_x64-setup.exe",
+            "Dorion_6.13.2_x64-setup.exe"
+        ));
+        // The arm64 installer has a dot, not an underscore, before x64.
+        assert!(!glob_match(
+            "Dorion_*_x64-setup.exe",
+            "Dorion_6.13.2.arm64-setup.exe"
+        ));
+        assert!(!glob_match(
+            "Dorion_*_x64-setup.exe",
+            "Dorion_6.13.2_win64_portable.zip"
+        ));
+        assert!(glob_match("a?c", "abc"));
+        assert!(!glob_match("a?c", "abbc"));
+    }
+
+    #[test]
+    fn github_latest_pattern_parses_owner_and_pattern() {
+        let link =
+            "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe";
+        assert_eq!(
+            github_latest_pattern(link),
+            Some(("SpikeHD/Dorion", "Dorion_*_x64-setup.exe"))
+        );
+        assert_eq!(github_latest_pattern("https://example.com/file.zip"), None);
+    }
+
+    #[test]
+    fn asset_url_in_picks_the_first_match() {
+        // Minified onto one line, exactly as curl.exe receives it.
         let json = concat!(
-            r#"{"assets":[{"browser_download_url":"https://example.com/mpv-dev-x86_64-20261013-git-abc.7z"},"#,
-            r#"{"browser_download_url":"https://example.com/mpv-x86_64-v3-20261013-git-abc.7z"},"#,
-            r#"{"browser_download_url":"https://example.com/mpv-aarch64-20261013-git-abc.7z"},"#,
+            r#"{"assets":[{"browser_download_url":"https://example.com/mpv-aarch64-20261013-git-abc.7z"},"#,
             r#"{"browser_download_url":"https://example.com/mpv-x86_64-20261013-git-abc.7z"}]}"#,
         );
         assert_eq!(
-            asset_url_in(json, is_mpv_asset).as_deref(),
+            asset_url_in(json, |file| glob_match("mpv-x86_64-*.7z", file)).as_deref(),
             Some("https://example.com/mpv-x86_64-20261013-git-abc.7z")
         );
     }
 
     #[test]
-    fn asset_url_in_returns_none_without_a_match() {
-        assert_eq!(asset_url_in("[]", is_mpv_asset), None);
-    }
-
-    #[test]
-    fn is_mpv_asset_excludes_variants() {
-        assert!(is_mpv_asset("mpv-x86_64-20261013-git-9d144e57b6.7z"));
-        assert!(!is_mpv_asset("mpv-x86_64-v3-20261013-git-9d144e57b6.7z"));
-        assert!(!is_mpv_asset("mpv-dev-x86_64-20261013-git-9d144e57b6.7z"));
-        assert!(!is_mpv_asset("mpv-x86_64-20261013-git-9d144e57b6.zip"));
-    }
-
-    #[test]
-    fn is_dorion_asset_picks_the_x64_installer() {
-        assert!(is_dorion_asset("Dorion_6.13.2_x64-setup.exe"));
-        assert!(!is_dorion_asset("Dorion_6.13.2.arm64-setup.exe"));
-        assert!(!is_dorion_asset("Dorion_6.13.2_win64_portable.zip"));
-        assert!(!is_dorion_asset("Dorion_6.13.2_x64_en-US.msi"));
+    fn install_kind_follows_the_extension() {
+        assert!(matches!(install_kind("app.7z"), InstallKind::Portable));
+        assert!(matches!(install_kind("app.tar.gz"), InstallKind::Portable));
+        assert!(matches!(install_kind("app.ZIP"), InstallKind::Portable));
+        assert!(matches!(install_kind("setup.exe"), InstallKind::Installer));
+        assert!(matches!(install_kind("setup.msi"), InstallKind::Installer));
+        assert!(matches!(install_kind("readme.txt"), InstallKind::File));
     }
 }

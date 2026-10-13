@@ -7,7 +7,11 @@
 /// the status bar.
 pub type Action = fn() -> Result<String, String>;
 
-use crate::tools::{cleaning, downloader, tweaks};
+/// A unit of work run on a worker thread. Unlike [`Action`] it may capture
+/// data (for example a Store entry), so it can't live in a `const` table.
+pub type Job = Box<dyn FnOnce() -> Result<String, String> + Send>;
+
+use crate::tools::{cleaning, tweaks};
 
 /// Rows of the Cleaning tab, in display order.
 pub const CLEANING_OPTIONS: [(&str, &str, bool, Option<Action>); 4] = [
@@ -197,18 +201,33 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
     ),
 ];
 
-/// Rows of the Store tab, in display order.
-pub const STORE_OPTIONS: [(&str, &str, bool, Option<Action>); 2] = [
-    (
-        "mpv",
-        "Media player — downloads the latest Windows build to your Downloads folder",
-        false,
-        Some(downloader::download_mpv),
-    ),
-    (
-        "Dorion",
-        "Lightweight Discord client — downloads the Windows installer to your Downloads folder",
-        false,
-        Some(downloader::download_dorion),
-    ),
+/// A downloadable app on the Store tab: a name, a description and a link.
+///
+/// The link is either a direct file URL, or a GitHub
+/// `releases/latest/download/<name>` URL whose file name contains a `*` glob,
+/// in which case the newest matching release asset is fetched instead. The
+/// install method is chosen from the downloaded file's extension: archives are
+/// unpacked, installers are run.
+pub struct StoreApp {
+    /// Row label, also used as the install folder name.
+    pub name: &'static str,
+    /// One-line description shown in the table.
+    pub description: &'static str,
+    /// Download link (see the type docs for the `*` glob form).
+    pub link: &'static str,
+}
+
+/// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
+/// app; nothing else needs wiring up.
+pub static STORE_OPTIONS: [StoreApp; 2] = [
+    StoreApp {
+        name: "mpv",
+        description: "Media player — installs the latest Windows build",
+        link: "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
+    },
+    StoreApp {
+        name: "Dorion",
+        description: "Lightweight Discord client",
+        link: "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
+    },
 ];

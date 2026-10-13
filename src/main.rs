@@ -128,7 +128,7 @@ fn run(
 ) -> Result<()> {
     let mut cleaning_status = cleaning::CleaningStatus::new();
     let mut tweaks_status = tweaks::TweaksStatus::new();
-    let mut store_status = downloader::StoreStatus::new();
+    let mut store_status = downloader::StoreStatus::new(&STORE_OPTIONS);
     let mut message = String::new();
     let mut message_is_error = false;
     // A process's elevation never changes after launch, so check it once.
@@ -335,7 +335,7 @@ fn run(
                         tweaks_status.refresh_activation();
                     }
                 }
-                2 => store_status.refresh(),
+                2 => store_status.refresh(&STORE_OPTIONS),
                 _ => {}
             }
         }

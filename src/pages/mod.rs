@@ -38,9 +38,9 @@ pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows:
     // ever truncated when new rows are added.
     let action_width = CLEANING_OPTIONS
         .iter()
-        .chain(TWEAKS_OPTIONS.iter())
-        .chain(STORE_OPTIONS.iter())
         .map(|(name, ..)| name.chars().count())
+        .chain(TWEAKS_OPTIONS.iter().map(|(name, ..)| name.chars().count()))
+        .chain(STORE_OPTIONS.iter().map(|app| app.name.chars().count()))
         .max()
         .unwrap_or(22) as u16;
     let widths = [
