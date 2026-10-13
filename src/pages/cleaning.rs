@@ -4,18 +4,17 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Cell, Row, TableState},
+    widgets::TableState,
 };
 
-use crate::data::options::CLEANING_OPTIONS;
-use crate::theme;
-use crate::tools::cleaning::{self, CleaningStatus};
+use crate::data::options::{Action, CLEANING_OPTIONS};
+use crate::tools::cleaning::CleaningStatus;
 
 /// Render the Cleaning table from the cached `status`.
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &CleaningStatus) {
     let rows = CLEANING_OPTIONS
         .iter()
-        .map(|(name, description, needs_admin)| {
+        .map(|(name, description, needs_admin, _)| {
             // Pick the status text that belongs to this row.
             let value = match *name {
                 "Recycle Bin" => status.recycle_bin.as_str(),
@@ -25,25 +24,17 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Clea
                 _ => " ",
             };
 
-            Row::new(vec![
-                Cell::from(*name).style(theme::admin_row(*needs_admin)),
-                Cell::from(*description).style(theme::dim()),
-                super::status_cell(value),
-            ])
+            super::option_row(name, description, *needs_admin, value)
         })
         .collect::<Vec<_>>();
 
     super::action_table(frame, area, state, rows);
 }
 
-/// The cleaning action behind the selected row; the caller runs it on a
-/// worker thread so the UI keeps animating.
-pub fn action(index: usize) -> Option<fn() -> Result<String, String>> {
-    Some(match index {
-        0 => cleaning::clear_recycle_bin,
-        1 => cleaning::clean_windows_temp,
-        2 => cleaning::clean_user_temp,
-        3 => cleaning::run_disk_cleanup,
-        _ => return None,
-    })
+/// The action, label and admin requirement behind the selected row; `main.rs`
+/// runs the action on a worker thread so the UI keeps animating.
+pub fn action(index: usize) -> Option<(Action, &'static str, bool)> {
+    let (name, _, needs_admin, action) = CLEANING_OPTIONS.get(index)?;
+    let action = (*action)?;
+    Some((action, name, *needs_admin))
 }

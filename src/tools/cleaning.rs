@@ -40,7 +40,7 @@ fn user_temp_dir() -> PathBuf {
 
 /// Total size in bytes and number of items in the Recycle Bin, or an error
 /// describing why the query failed.
-pub fn query_recycle_bin() -> Result<(u64, u64), String> {
+fn query_recycle_bin() -> Result<(u64, u64), String> {
     let mut info = SHQUERYRBINFO {
         cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32,
         i64Size: 0,
@@ -112,12 +112,12 @@ fn preview_dir(path: &Path) -> Option<String> {
 }
 
 /// Status text for the Windows temp folder.
-pub fn preview_windows_temp() -> Option<String> {
+fn preview_windows_temp() -> Option<String> {
     preview_dir(&windir().join("Temp"))
 }
 
 /// Status text for the per-user temp folder.
-pub fn preview_user_temp() -> Option<String> {
+fn preview_user_temp() -> Option<String> {
     preview_dir(&user_temp_dir())
 }
 

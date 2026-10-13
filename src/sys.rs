@@ -50,7 +50,7 @@ pub fn run(program: &str, args: &[&str]) -> Result<String, String> {
 }
 
 /// Run a command and return the raw output regardless of exit status.
-pub fn run_capture(program: &str, args: &[&str]) -> Result<Output, String> {
+fn run_capture(program: &str, args: &[&str]) -> Result<Output, String> {
     Command::new(program)
         .args(args)
         .output()
@@ -147,12 +147,13 @@ pub fn format_bytes(bytes: u64) -> String {
 // ----------------------------------------------------------------- deletion
 
 /// What a delete operation managed to remove, and what it had to skip.
+/// Read the summary with [`ClearReport::summary`].
 #[derive(Default)]
 pub struct ClearReport {
-    pub files: u64,
-    pub dirs: u64,
-    pub bytes: u64,
-    pub skipped: u64,
+    files: u64,
+    dirs: u64,
+    bytes: u64,
+    skipped: u64,
 }
 
 impl ClearReport {
@@ -215,9 +216,10 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
                 }
                 continue;
             }
+            // Count the subtree while it still exists, then remove it.
+            let (files, dirs, bytes) = dir_stats(&path);
             match fs::remove_dir_all(&path) {
                 Ok(()) => {
-                    let (files, dirs, bytes) = dir_stats(&path);
                     report.files += files;
                     report.dirs += dirs + 1;
                     report.bytes += bytes;

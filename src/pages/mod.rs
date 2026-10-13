@@ -1,5 +1,5 @@
 //! The per-tab pages. Each page has a `draw` function that renders its table
-//! and an `activate` function that runs the selected row.
+//! and an `action` function that looks up the selected row's action.
 
 pub mod cleaning;
 pub mod tweaks;
@@ -55,6 +55,16 @@ pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows:
         .column_spacing(SPACING)
         .row_highlight_style(theme::selected());
     frame.render_stateful_widget(list, list_area, state);
+}
+
+/// Build the shared table row: badged name, dim description, status cell.
+pub fn option_row(name: &str, description: &str, needs_admin: bool, value: &str) -> Row<'static> {
+    Row::new(vec![
+        // Rows that need administrator rights get a purple badge.
+        Cell::from(name.to_string()).style(theme::admin_row(needs_admin)),
+        Cell::from(description.to_string()).style(theme::dim()),
+        status_cell(value),
+    ])
 }
 
 /// Build the status cell shared by both pages: right-aligned so the values

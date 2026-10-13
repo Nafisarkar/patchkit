@@ -4,18 +4,17 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Cell, Row, TableState},
+    widgets::TableState,
 };
 
-use crate::data::options::TWEAKS_OPTIONS;
-use crate::theme;
-use crate::tools::tweaks::{self, TweaksStatus};
+use crate::data::options::{Action, TWEAKS_OPTIONS};
+use crate::tools::tweaks::TweaksStatus;
 
 /// Render the Tweaks table from the cached `status`.
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &TweaksStatus) {
     let rows = TWEAKS_OPTIONS
         .iter()
-        .map(|(name, description, needs_admin)| {
+        .map(|(name, description, needs_admin, _)| {
             // Pick the status text that belongs to this row.
             let value = match *name {
                 "Toggle Dark Mode" => status.dark_mode.as_str(),
@@ -47,48 +46,17 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
                 _ => " ",
             };
 
-            Row::new(vec![
-                // Rows that need administrator rights get a purple badge.
-                Cell::from(*name).style(theme::admin_row(*needs_admin)),
-                Cell::from(*description).style(theme::dim()),
-                super::status_cell(value),
-            ])
+            super::option_row(name, description, *needs_admin, value)
         })
         .collect::<Vec<_>>();
 
     super::action_table(frame, area, state, rows);
 }
 
-/// The action function behind the selected row; the caller runs it on a
-/// worker thread so the UI keeps animating.
-pub fn action(index: usize) -> Option<fn() -> Result<String, String>> {
-    Some(match index {
-        0 => tweaks::toggle_dark_mode,
-        1 => tweaks::show_file_extensions,
-        2 => tweaks::toggle_hidden_files,
-        3 => tweaks::activate_windows,
-        4 => tweaks::wallpaper_compression_set_max,
-        5 => tweaks::remove_preinstalled_apps,
-        6 => tweaks::edge_debloat,
-        7 => tweaks::toggle_bing_search,
-        8 => tweaks::toggle_classic_context_menu,
-        9 => tweaks::disable_windows_ai,
-        10 => tweaks::toggle_reserved_storage,
-        11 => tweaks::remove_onedrive,
-        12 => tweaks::disable_activity_history,
-        13 => tweaks::disable_bitlocker,
-        14 => tweaks::disable_consumer_features,
-        15 => tweaks::disable_delivery_optimization,
-        16 => tweaks::disable_location_tracking,
-        17 => tweaks::toggle_store_search,
-        18 => tweaks::prevent_device_metadata,
-        19 => tweaks::set_services_manual,
-        20 => tweaks::toggle_explorer_home,
-        21 => tweaks::set_visual_effects_performance,
-        22 => tweaks::toggle_background_apps,
-        23 => tweaks::enable_hyperv,
-        24 => tweaks::enable_wsl,
-        25 => tweaks::run_ooshutup,
-        _ => return None,
-    })
+/// The action, label and admin requirement behind the selected row; `main.rs`
+/// runs the action on a worker thread so the UI keeps animating.
+pub fn action(index: usize) -> Option<(Action, &'static str, bool)> {
+    let (name, _, needs_admin, action) = TWEAKS_OPTIONS.get(index)?;
+    let action = (*action)?;
+    Some((action, name, *needs_admin))
 }

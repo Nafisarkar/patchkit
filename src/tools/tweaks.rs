@@ -36,7 +36,8 @@ fn reg_sz(path: &str, name: &str) -> Option<String> {
     let out = sys::run("reg", &["query", path, "/v", name]).ok()?;
     // The value line looks like "    Value    REG_SZ    Allow".
     let line = out.lines().find(|l| l.contains("REG_SZ"))?;
-    line.split_whitespace().last().map(str::to_string)
+    // Everything after the type token is the data (it may contain spaces).
+    Some(line.split_once("REG_SZ")?.1.trim().to_string())
 }
 
 /// Write a registry value of any supported type, creating it if necessary.
@@ -62,6 +63,26 @@ fn require_admin() -> Result<(), String> {
     }
 }
 
+/// Apply a table of `(path, name, type, data)` registry values, continuing
+/// past individual failures and reporting every value that failed.
+fn apply_registry_values(values: &[(&str, &str, &str, &str)]) -> Result<(), String> {
+    let failures: Vec<String> = values
+        .iter()
+        .filter_map(|(path, name, reg_type, data)| set_reg(path, name, reg_type, data).err())
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// Set a Windows service's startup type ("disabled", "manual", ...).
+/// Services that do not exist on this install are ignored.
+fn set_service_start(name: &str, mode: &str) {
+    let _ = sys::run("sc", &["config", name, "start=", mode]);
+}
+
 // ----------------------------------------------------------------- wallpaper compression
 
 /// True when Windows still compresses wallpapers. The value defaults to 85
@@ -73,7 +94,7 @@ pub fn wallpaper_compression_enabled() -> Option<bool> {
 /// Disable the automatic JPEG compression of wallpapers by setting
 /// `JPEGImportQuality` to 100. Windows applies it when the next wallpaper is
 /// set, not at boot.
-pub fn wallpaper_compression_set_max() -> Result<String, String> {
+pub fn disable_wallpaper_compression() -> Result<String, String> {
     if wallpaper_compression_enabled() == Some(false) {
         return Ok("wallpaper compression is already disabled".to_string());
     }
@@ -181,7 +202,7 @@ ForEach($app in $appname) {{
     sys::powershell(&script)?;
 
     Ok(format!(
-        "removed preinstalled apps: {}",
+        "preinstalled apps removed where present: {}",
         installed.join(", ")
     ))
 }
@@ -233,18 +254,9 @@ pub fn edge_debloat_enabled() -> Option<bool> {
 /// stop the rest; every failure is reported at the end.
 pub fn edge_debloat() -> Result<String, String> {
     require_admin()?;
-    let failures: Vec<String> = EDGE_POLICY_VALUES
-        .iter()
-        .filter_map(|(path, name, reg_type, data)| set_reg(path, name, reg_type, data).err())
-        .collect();
-    if failures.is_empty() {
-        Ok("edge debloat policies applied".to_string())
-    } else {
-        Err(format!(
-            "some Edge policies failed: {}",
-            failures.join("; ")
-        ))
-    }
+    apply_registry_values(&EDGE_POLICY_VALUES)
+        .map_err(|failures| format!("some Edge policies failed: {failures}"))?;
+    Ok("edge debloat policies applied".to_string())
 }
 
 // ----------------------------------------------------------------- bing search
@@ -255,6 +267,7 @@ const SEARCH: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Search";
 /// True when Start Menu search shows Bing web results. A missing value means
 /// the Windows default, which is enabled.
 pub fn bing_search_enabled() -> Option<bool> {
+    // The value is inverted: BingSearchEnabled = 1 turns Bing *off*.
     Some(reg_dword(SEARCH, "BingSearchEnabled").unwrap_or(0) == 0)
 }
 
@@ -262,7 +275,8 @@ pub fn bing_search_enabled() -> Option<bool> {
 /// the change applies immediately).
 pub fn toggle_bing_search() -> Result<String, String> {
     let now_enabled = bing_search_enabled().unwrap_or(true);
-    set_dword(SEARCH, "BingSearchEnabled", u32::from(!now_enabled))?;
+    // Writing 1 disables Bing, 0 enables it — hence the non-obvious value.
+    set_dword(SEARCH, "BingSearchEnabled", u32::from(now_enabled))?;
     sys::restart_explorer()?;
     Ok(format!(
         "Bing search {} in the Start Menu",
@@ -299,16 +313,10 @@ pub fn toggle_classic_context_menu() -> Result<String, String> {
         Ok("restored the Windows 11 right-click menu".to_string())
     } else {
         // The empty default value on InprocServer32 is the entire trick.
+        // (`/ve` writes the key's unnamed default value; no /d needed.)
         sys::run(
             "reg",
-            &[
-                "add",
-                &format!("{CLASSIC_CONTEXT_MENU}\\InprocServer32"),
-                "/ve",
-                "/d",
-                "",
-                "/f",
-            ],
+            &["add", &format!("{CLASSIC_CONTEXT_MENU}\\InprocServer32"), "/ve", "/f"],
         )?;
         sys::restart_explorer()?;
         Ok("restored the classic right-click menu".to_string())
@@ -385,13 +393,20 @@ pub fn reserved_storage_enabled() -> Option<bool> {
 /// it helps small drives; re-enable it before major feature updates.
 pub fn toggle_reserved_storage() -> Result<String, String> {
     require_admin()?;
-    if reserved_storage_enabled().unwrap_or(true) {
-        sys::run("DISM", &["/Online", "/Set-ReservedStorageState", "/State:Disabled"])?;
-        Ok("reserved storage disabled".to_string())
+    let state = if reserved_storage_enabled().unwrap_or(true) {
+        "/State:Disabled"
     } else {
-        sys::run("DISM", &["/Online", "/Set-ReservedStorageState", "/State:Enabled"])?;
-        Ok("reserved storage enabled".to_string())
-    }
+        "/State:Enabled"
+    };
+    sys::run("DISM", &["/Online", "/Set-ReservedStorageState", state])?;
+    Ok(format!(
+        "reserved storage {}",
+        if state == "/State:Disabled" {
+            "disabled"
+        } else {
+            "enabled"
+        }
+    ))
 }
 
 // ---------------------------------------------------------- activity history
@@ -503,8 +518,7 @@ pub fn location_tracking_enabled() -> Option<bool> {
 /// and set the Geolocation Service to disabled. Requires administrator rights.
 pub fn disable_location_tracking() -> Result<String, String> {
     require_admin()?;
-    // The service does not exist on every install; that is fine.
-    let _ = sys::run("sc", &["config", "lfsvc", "start=", "disabled"]);
+    set_service_start("lfsvc", "disabled");
     set_reg(LOCATION_CONSENT, "Value", "REG_SZ", "Deny")?;
     set_dword(LOCATION_SENSOR_OVERRIDE, "SensorPermissionState", 0)?;
     set_dword(SYSTEM_MAPS, "AutoUpdateEnabled", 0)?;
@@ -594,12 +608,11 @@ pub fn services_applied() -> Option<bool> {
 pub fn set_services_manual() -> Result<String, String> {
     require_admin()?;
     // Some of these services do not exist on every install; skip failures.
-    for name in ["CscService", "DiagTrack", "SharedAccess"] {
-        let _ = sys::run("sc", &["config", name, "start=", "disabled"]);
-    }
-    for name in ["MapsBroker", "StorSvc"] {
-        let _ = sys::run("sc", &["config", name, "start=", "manual"]);
-    }
+    set_service_start("CscService", "disabled");
+    set_service_start("DiagTrack", "disabled");
+    set_service_start("SharedAccess", "disabled");
+    set_service_start("MapsBroker", "manual");
+    set_service_start("StorSvc", "manual");
     // Splitting every service into its own svchost only pays off with plenty
     // of RAM; the threshold in KB should match the installed memory.
     sys::powershell(
@@ -652,8 +665,6 @@ pub fn toggle_explorer_home() -> Result<String, String> {
 
 // ------------------------------------------------------------ visual effects
 
-/// `HKCU\Control Panel\Desktop`.
-const VISUAL_FX_DESKTOP: &str = r"HKCU\Control Panel\Desktop";
 /// `HKCU\Control Panel\Desktop\WindowMetrics`.
 const WINDOW_METRICS: &str = r"HKCU\Control Panel\Desktop\WindowMetrics";
 /// `HKCU\Control Panel\Keyboard`.
@@ -667,10 +678,10 @@ const DWM: &str = r"HKCU\Software\Microsoft\Windows\DWM";
 /// `(path, name, type, data)`. String values are REG_SZ because that is what
 /// the Control Panel applets write and read back.
 const VISUAL_FX_VALUES: [(&str, &str, &str, &str); 13] = [
-    (VISUAL_FX_DESKTOP, "DragFullWindows", "REG_SZ", "0"),
-    (VISUAL_FX_DESKTOP, "MenuShowDelay", "REG_SZ", "200"),
+    (DESKTOP, "DragFullWindows", "REG_SZ", "0"),
+    (DESKTOP, "MenuShowDelay", "REG_SZ", "200"),
     (WINDOW_METRICS, "MinAnimate", "REG_SZ", "0"),
-    (VISUAL_FX_DESKTOP, "UserPreferencesMask", "REG_BINARY", "9012038010000000"),
+    (DESKTOP, "UserPreferencesMask", "REG_BINARY", "9012038010000000"),
     (KEYBOARD, "KeyboardDelay", "REG_SZ", "0"),
     (ADVANCED, "ListviewAlphaSelect", "REG_DWORD", "0"),
     (ADVANCED, "ListviewShadow", "REG_DWORD", "0"),
@@ -693,17 +704,8 @@ pub fn visual_effects_performance() -> Option<bool> {
 /// transparency, a shorter menu delay, and a minimal taskbar (restarts
 /// Explorer to apply it).
 pub fn set_visual_effects_performance() -> Result<String, String> {
-    // Keep going when one write fails so the rest of the preset still lands.
-    let failures: Vec<String> = VISUAL_FX_VALUES
-        .iter()
-        .filter_map(|(path, name, reg_type, data)| set_reg(path, name, reg_type, data).err())
-        .collect();
-    if !failures.is_empty() {
-        return Err(format!(
-            "some visual effect values failed: {}",
-            failures.join("; ")
-        ));
-    }
+    apply_registry_values(&VISUAL_FX_VALUES)
+        .map_err(|failures| format!("some visual effect values failed: {failures}"))?;
     sys::restart_explorer()?;
     Ok("visual effects set to best performance".to_string())
 }
@@ -905,21 +907,22 @@ if ($OneDriveDir -and (Test-Path $OneDriveDir)) {
         Remove-Item -Path $OneDriveDir -Recurse -Force
         [Environment]::SetEnvironmentVariable('OneDrive', $null, 'User')
     }
-}
-
-Get-Service -Name 'OneSyncSvc*' -ErrorAction SilentlyContinue |
-    Set-Service -StartupType Disabled -ErrorAction SilentlyContinue";
+}";
     sys::powershell(script)?;
+    // Disable the OneSyncSvc service *template*: the per-user instances
+    // (OneSyncSvc_<SID>) are ACL-protected and cannot be set directly.
+    set_dword(r"HKLM\SYSTEM\CurrentControlSet\Services\OneSyncSvc", "Start", 4)?;
     sys::restart_explorer()?;
     Ok("OneDrive removed (Explorer restarted)".to_string())
 }
 
 // ----------------------------------------------------------------- dark mode
 
-/// True when apps use the dark theme.
+/// True when apps use the dark theme. A missing value means the Windows
+/// default, which is light.
 pub fn dark_mode_enabled() -> Option<bool> {
     // AppsUseLightTheme: 0 = dark, 1 = light.
-    Some(reg_dword(PERSONALIZE, "AppsUseLightTheme")? == 0)
+    Some(reg_dword(PERSONALIZE, "AppsUseLightTheme").unwrap_or(1) == 0)
 }
 
 /// Switch apps and the system between light and dark theme. Each of the two
@@ -945,10 +948,11 @@ pub fn toggle_dark_mode() -> Result<String, String> {
 
 // ----------------------------------------------------------- file extensions
 
-/// True when File Explorer shows file extensions.
+/// True when File Explorer shows file extensions. A missing value means the
+/// Windows default, which is hidden.
 pub fn file_extensions_visible() -> Option<bool> {
     // HideFileExt: 0 = extensions shown, 1 = hidden.
-    Some(reg_dword(ADVANCED, "HideFileExt")? == 0)
+    Some(reg_dword(ADVANCED, "HideFileExt").unwrap_or(1) == 0)
 }
 
 /// Make File Explorer show file extensions (restarts Explorer to apply it).
@@ -963,10 +967,11 @@ pub fn show_file_extensions() -> Result<String, String> {
 
 // ------------------------------------------------------------- hidden files
 
-/// True when File Explorer shows hidden files and folders.
+/// True when File Explorer shows hidden files and folders. A missing value
+/// means the Windows default, which is hidden.
 pub fn hidden_files_visible() -> Option<bool> {
     // Hidden: 1 = shown, 2 = hidden.
-    Some(reg_dword(ADVANCED, "Hidden")? == 1)
+    Some(reg_dword(ADVANCED, "Hidden").unwrap_or(2) == 1)
 }
 
 /// Show or hide hidden files and folders (restarts Explorer to apply it).
@@ -1040,7 +1045,7 @@ pub struct TweaksStatus {
     pub delivery_optimization: String,
     /// Text for the "Location Tracking" row.
     pub location: String,
-    /// Text for the "Store Recommendations" row.
+    /// Text for the "Store Suggestions" row.
     pub store_search: String,
     /// Text for the "Device Companion Apps" row.
     pub device_metadata: String,

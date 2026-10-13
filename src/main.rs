@@ -22,8 +22,9 @@ use tabs::TabManager;
 use crate::data::options::{CLEANING_OPTIONS, TWEAKS_OPTIONS};
 use crate::tools::{cleaning, tweaks};
 
-/// Key hints shown at the bottom-right of the window.
-const KEY_HINTS: &str = "↑↓ move   ⏎ run   ←→ tabs   q quit";
+/// Key hints shown at the bottom-right of the window. "purple" refers to the
+/// highlighted rows: they need administrator rights.
+const KEY_HINTS: &str = "↑↓ move · Enter run · ←→ tabs · q quit · purple = admin";
 /// Short tagline shown at the top-right.
 const TAGLINE: &str = "cleanup & tweaks toolbox";
 /// App version, taken from Cargo.toml at compile time.
@@ -58,10 +59,11 @@ fn main() -> Result<()> {
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// What the status bar shows: either the running indicator of an in-flight
-/// job or the last action's result.
+/// job or the last action's result (with its error state, so failures can be
+/// coloured without parsing the text).
 enum StatusLine<'a> {
     Running(&'a str),
-    Message(&'a str),
+    Message { text: &'a str, is_error: bool },
 }
 
 /// A tab action running on a worker thread, so the UI keeps animating while
@@ -75,8 +77,9 @@ struct Job {
     handle: std::thread::JoinHandle<Result<String, String>>,
     /// Which tab's status snapshot to refresh when the job finishes.
     tab: usize,
-    /// Selected row index, needed to spot the slow activation refresh.
-    index: usize,
+    /// True only for the activation action, whose slow WMI check is refreshed
+    /// separately when the job finishes.
+    refresh_activation: bool,
 }
 
 /// The event loop. Draws a frame, polls events for a short moment, then loops
@@ -84,7 +87,7 @@ struct Job {
 /// its own thread. Returns when the user quits.
 fn run(
     terminal: &mut DefaultTerminal,
-    tabmanager: &mut TabManager,
+    tab_manager: &mut TabManager,
     table_state: &mut TableState,
 ) -> Result<()> {
     // Cached UI state, refreshed only when it can actually change.
@@ -92,6 +95,8 @@ fn run(
     let mut tweaks_status = tweaks::TweaksStatus::new();
     // Result of the last action, shown in the status bar.
     let mut message = String::new();
+    // Whether `message` is an error (drives the red styling).
+    let mut message_is_error = false;
     // A process's elevation never changes after launch, so check it once.
     let is_admin = sys::is_admin();
     // The action currently running on a worker thread, if any.
@@ -101,107 +106,165 @@ fn run(
 
     loop {
         // Compose the running indicator; redrawing advances the spinner.
-        let running = job.as_ref().map(|job| {
-            let frame =
-                SPINNER[(job.started.elapsed().as_millis() / 125) as usize % SPINNER.len()];
-            format!(
-                "{frame} Running: {}… ({}s)",
-                job.label,
-                job.started.elapsed().as_secs()
-            )
-        });
-        terminal.draw(|frame| {
-            let status = match running.as_deref() {
-                Some(text) => StatusLine::Running(text),
-                None => StatusLine::Message(&message),
-            };
-            draw(
-                frame,
-                tabmanager,
-                table_state,
-                &cleaning_status,
-                &tweaks_status,
-                is_admin,
-                status,
-            )
-        })?;
-
-        // Poll events with a timeout so the spinner keeps animating.
-        if event::poll(Duration::from_millis(125))?
-            && let Event::Key(key) = event::read()?
+        // (The nested ifs below are deliberately not collapsed into one
+        // let-chain: two plain blocks are easier to read for new Rust
+        // programmers.)
+        #[allow(clippy::collapsible_if)]
         {
-            // On Windows crossterm reports both press and release, so ignore
-            // everything that is not a press.
-            if key.kind != event::KeyEventKind::Press {
-                continue;
-            }
-
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    // Quitting kills a still-running worker mid-task, so
-                    // require a second press to confirm.
-                    if job.is_some() && !quit_armed {
-                        quit_armed = true;
-                        message = "a task is still running — press q again to quit anyway"
-                            .to_string();
-                    } else {
-                        break;
+            let running = job.as_ref().map(|job| {
+                let ticks = job.started.elapsed().as_millis() as usize / 125;
+                let frame = SPINNER[ticks % SPINNER.len()];
+                format!(
+                    "{frame} Running: {}… ({}s)",
+                    job.label,
+                    job.started.elapsed().as_secs()
+                )
+            });
+            terminal.draw(|frame| {
+                let status = if let Some(text) = running.as_deref() {
+                    StatusLine::Running(text)
+                } else {
+                    StatusLine::Message {
+                        text: &message,
+                        is_error: message_is_error,
                     }
-                }
+                };
+                draw(
+                    frame,
+                    tab_manager,
+                    table_state,
+                    &cleaning_status,
+                    &tweaks_status,
+                    is_admin,
+                    status,
+                )
+            })?;
 
-                // table navigation
-                KeyCode::Up | KeyCode::Char('k') => {
-                    let selected = table_state.selected().unwrap_or(0);
-                    if selected > 0 {
-                        table_state.select(Some(selected - 1));
+            // Poll events with a timeout so the spinner keeps animating.
+            if event::poll(Duration::from_millis(125))? {
+                if let Event::Key(key) = event::read()? {
+                    // On Windows crossterm reports both press and release, so
+                    // ignore everything that is not a press.
+                    if key.kind != event::KeyEventKind::Press {
+                        continue;
                     }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let selected = table_state.selected().unwrap_or(0);
-                    if selected + 1 < item_count(tabmanager.get_selection()) {
-                        table_state.select(Some(selected + 1));
-                    }
-                }
 
-                // start the selected action on a worker thread
-                KeyCode::Enter => {
-                    if job.is_none()
-                        && let Some(index) = table_state.selected()
-                    {
-                        let tab = tabmanager.get_selection();
-                        let action = match tab {
-                            0 => pages::cleaning::action(index),
-                            1 => pages::tweaks::action(index),
-                            _ => None,
-                        };
-                        if let Some(action) = action {
-                            quit_armed = false;
-                            let label = match tab {
-                                0 => CLEANING_OPTIONS[index].0,
-                                _ => TWEAKS_OPTIONS[index].0,
-                            };
-                            job = Some(Job {
-                                label: label.to_string(),
-                                started: Instant::now(),
-                                handle: std::thread::spawn(action),
-                                tab,
-                                index,
-                            });
+                    let mut quit_requested = false;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => quit_requested = true,
+                        // Ctrl+C is the universal abort key; raw mode delivers
+                        // it as a plain character, so handle it explicitly.
+                        KeyCode::Char('c')
+                            if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            quit_requested = true
+                        }
+
+                        // table navigation
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let selected = table_state.selected().unwrap_or(0);
+                            if selected > 0 {
+                                table_state.select(Some(selected - 1));
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let selected = table_state.selected().unwrap_or(0);
+                            if selected + 1 < item_count(tab_manager.get_selection()) {
+                                table_state.select(Some(selected + 1));
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            let selected = table_state.selected().unwrap_or(0);
+                            table_state.select(Some(selected.saturating_sub(10)));
+                        }
+                        KeyCode::PageDown => {
+                            let selected = table_state.selected().unwrap_or(0);
+                            let last = item_count(tab_manager.get_selection())
+                                .saturating_sub(1);
+                            table_state.select(Some((selected + 10).min(last)));
+                        }
+                        KeyCode::Home => table_state.select(Some(0)),
+                        KeyCode::End => {
+                            let last = item_count(tab_manager.get_selection())
+                                .saturating_sub(1);
+                            table_state.select(Some(last));
+                        }
+
+                        // run the selected action on a worker thread
+                        KeyCode::Enter => {
+                            if job.is_some() {
+                                message = "a task is still running — wait for it to finish"
+                                    .to_string();
+                                message_is_error = true;
+                            } else if let Some(index) = table_state.selected() {
+                                let selected = match tab_manager.get_selection() {
+                                    0 => pages::cleaning::action(index),
+                                    1 => pages::tweaks::action(index),
+                                    _ => None,
+                                };
+                                if let Some((action, label, needs_admin)) = selected {
+                                    if needs_admin && !is_admin {
+                                        // Admin-only tweaks fail unelevated;
+                                        // say so instead of starting a doomed
+                                        // worker.
+                                        message = "this tweak needs administrator rights — restart PatchKit as administrator"
+                                            .to_string();
+                                        message_is_error = true;
+                                    } else {
+                                        // The activation check is slow, so it
+                                        // is only refreshed after the
+                                        // activation action itself.
+                                        let refresh_activation =
+                                            tab_manager.get_selection() == 1
+                                                && label == "Windows Activation";
+                                        quit_armed = false;
+                                        message_is_error = false;
+                                        job = Some(Job {
+                                            label: label.to_string(),
+                                            started: Instant::now(),
+                                            handle: std::thread::spawn(action),
+                                            tab: tab_manager.get_selection(),
+                                            refresh_activation,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // tab navigation (start each tab at the first row)
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            tab_manager.prev_tab();
+                            table_state.select(Some(0));
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            tab_manager.next_tab();
+                            table_state.select(Some(0));
+                        }
+
+                        // refresh the cheap status values on request
+                        KeyCode::Char('r') => {
+                            cleaning_status.refresh();
+                            tweaks_status.refresh();
+                            message = "status refreshed".to_string();
+                            message_is_error = false;
+                        }
+
+                        _ => {}
+                    }
+
+                    if quit_requested {
+                        // Quitting kills a still-running worker mid-task, so
+                        // require a second press to confirm.
+                        if job.is_some() && !quit_armed {
+                            quit_armed = true;
+                            message = "a task is still running — press q again to quit anyway"
+                                .to_string();
+                            message_is_error = true;
+                        } else {
+                            break;
                         }
                     }
                 }
-
-                // tab navigation (start each tab at the first row)
-                KeyCode::Left | KeyCode::Char('h') => {
-                    tabmanager.prev_tab();
-                    table_state.select(Some(0));
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    tabmanager.next_tab();
-                    table_state.select(Some(0));
-                }
-
-                _ => {}
             }
         }
 
@@ -212,13 +275,14 @@ fn run(
                 .handle
                 .join()
                 .unwrap_or_else(|_| Err("worker thread crashed".to_string()));
+            message_is_error = result.is_err();
             message = result_message(result);
             quit_armed = false;
             match job.tab {
                 0 => cleaning_status.refresh(),
                 1 => {
                     tweaks_status.refresh();
-                    if job.index == 3 {
+                    if job.refresh_activation {
                         tweaks_status.refresh_activation();
                     }
                 }
@@ -251,7 +315,7 @@ fn result_message(result: Result<String, String>) -> String {
 /// the status bar.
 fn draw(
     frame: &mut Frame,
-    tabmanager: &TabManager,
+    tab_manager: &TabManager,
     table_state: &mut TableState,
     cleaning_status: &cleaning::CleaningStatus,
     tweaks_status: &tweaks::TweaksStatus,
@@ -346,21 +410,21 @@ fn draw(
 
     // Tab bar, with the active tab in the accent colour.
     Tabs::new(
-        tabmanager
-            .get_tabs()
+        tab_manager
+            .titles()
             .iter()
-            .map(|tab| tab.title.as_str())
+            .map(|title| title.as_str())
             .collect::<Vec<_>>(),
     )
     .style(theme::tab())
     .highlight_style(theme::tab_active())
     .padding("", "")
     .divider("   ")
-    .select(tabmanager.get_selection())
+    .select(tab_manager.get_selection())
     .render(tab_area, frame.buffer_mut());
 
     // Body: the table of the currently selected tab.
-    match tabmanager.get_selection() {
+    match tab_manager.get_selection() {
         0 => pages::cleaning::draw(frame, body_area, table_state, cleaning_status),
         1 => pages::tweaks::draw(frame, body_area, table_state, tweaks_status),
         _ => {}
@@ -378,7 +442,7 @@ fn draw(
     // still stand out in red afterwards.
     let (text, is_error) = match status {
         StatusLine::Running(text) => (text, false),
-        StatusLine::Message(text) => (text, text.starts_with("Error:")),
+        StatusLine::Message { text, is_error } => (text, is_error),
     };
     let style = if is_error { theme::error() } else { theme::dim() };
     Paragraph::new(text)
