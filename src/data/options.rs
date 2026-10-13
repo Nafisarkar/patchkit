@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 27] = [
+pub static STORE_OPTIONS: [StoreApp; 28] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -308,6 +308,11 @@ pub static STORE_OPTIONS: [StoreApp; 27] = [
         "VLC",
         "Open-source media player",
         "https://get.videolan.org/vlc/last/win64/vlc-*-win64.exe",
+    ),
+    StoreApp::new(
+        "oxdm",
+        "Download manager",
+        "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
     ),
     StoreApp::new(
         "Dorion",
