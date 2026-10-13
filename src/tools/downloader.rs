@@ -32,12 +32,12 @@ pub fn install(app: &StoreApp) -> Result<String, String> {
     }
 }
 
-/// "Installed" / "Not installed" for the status column.
+/// "Downloaded" / "Not downloaded" for the status column.
 pub fn status(app: &StoreApp) -> String {
-    let text = if is_installed(app.name) {
-        "Installed"
+    let text = if is_downloaded(app.name) {
+        "Downloaded"
     } else {
-        "Not installed"
+        "Not downloaded"
     };
     text.to_string()
 }
@@ -62,7 +62,7 @@ fn app_dir(name: &str) -> Result<PathBuf, String> {
 }
 
 /// True when the app's folder exists and has content.
-fn is_installed(name: &str) -> bool {
+fn is_downloaded(name: &str) -> bool {
     app_dir(name)
         .ok()
         .and_then(|dir| std::fs::read_dir(dir).ok())
@@ -264,7 +264,7 @@ impl StoreStatus {
         status
     }
 
-    /// Re-check which apps are installed.
+    /// Re-check which apps are downloaded.
     pub fn refresh(&mut self, apps: &[StoreApp]) {
         self.rows = apps.iter().map(status).collect();
     }
