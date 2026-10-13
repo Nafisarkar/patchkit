@@ -2,7 +2,7 @@
 //!
 //! Each Store row is a name and a link (see
 //! [`crate::data::options::STORE_OPTIONS`]). The file lands in
-//! `%LOCALAPPDATA%\PatchKit\<name>`, then an archive is unpacked there and an
+//! `%USERPROFILE%\Downloads\<name>`, then an archive is unpacked there and an
 //! installer is run. A link may also contain a `*` glob: a GitHub
 //! `releases/latest/download` link resolves against the release API, any other
 //! link against its directory listing.
@@ -42,15 +42,23 @@ pub fn status(app: &StoreApp) -> String {
     text.to_string()
 }
 
-/// `%LOCALAPPDATA%\PatchKit` — where PatchKit keeps its files.
+/// `%LOCALAPPDATA%\PatchKit` — where PatchKit keeps its own files (the 7-Zip
+/// helper), separate from the apps it downloads.
 fn tools_dir() -> Result<PathBuf, String> {
     let local = std::env::var_os("LocalAppData").ok_or("could not find %LOCALAPPDATA%")?;
     Ok(Path::new(&local).join("PatchKit"))
 }
 
-/// An app's download and install folder: `%LOCALAPPDATA%\PatchKit\<name>`.
+/// The user's Downloads folder: `%USERPROFILE%\Downloads`.
+fn downloads_dir() -> Result<PathBuf, String> {
+    let profile =
+        std::env::var_os("USERPROFILE").ok_or("could not find your user profile folder")?;
+    Ok(Path::new(&profile).join("Downloads"))
+}
+
+/// An app's download and install folder: `Downloads\<name>`.
 fn app_dir(name: &str) -> Result<PathBuf, String> {
-    Ok(tools_dir()?.join(name))
+    Ok(downloads_dir()?.join(name))
 }
 
 /// True when the app's folder exists and has content.
