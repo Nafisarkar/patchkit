@@ -1,5 +1,6 @@
 //! Backend for the Tweaks tab: light/dark theme, File Explorer options (file
-//! extensions and hidden files), and Windows activation.
+//! extensions and hidden files), wallpaper compression, and Windows
+//! activation.
 //!
 //! Registry values are read and written with `reg.exe`, so no extra dependency
 //! is needed. The `*_enabled` / `*_visible` helpers are read-only (they fill
@@ -14,6 +15,8 @@ use crate::sys;
 const PERSONALIZE: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 /// `HKCU\...\Explorer\Advanced` — holds the File Explorer view options.
 const ADVANCED: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+
+const DESKTOP: &str = r"HKCU\Control Panel\Desktop";
 
 /// Read a REG_DWORD value from the registry, or `None` if it is missing or the
 /// command fails.
@@ -42,6 +45,22 @@ fn set_dword(path: &str, name: &str, value: u32) -> Result<(), String> {
         ],
     )
     .map(|_| ())
+}
+
+// ----------------------------------------------------------------- wallpaper compression
+
+/// True when Windows still compresses wallpapers. The value defaults to 85
+/// (compression on) when it has never been set; 100 disables compression.
+pub fn wallpaper_compression_enabled() -> Option<bool> {
+    Some(reg_dword(DESKTOP, "JPEGImportQuality").unwrap_or(85) != 100)
+}
+
+/// Disable the automatic JPEG compression of wallpapers by setting
+/// `JPEGImportQuality` to 100. Windows applies it after a restart.
+pub fn wallpaper_compression_set_max() -> Result<String, String> {
+    set_dword(DESKTOP, "JPEGImportQuality", 100)?;
+    let _ = sys::broadcast_setting_change();
+    Ok("wallpaper compression disabled (restart to apply)".to_string())
 }
 
 // ----------------------------------------------------------------- dark mode
@@ -142,6 +161,8 @@ pub struct TweaksStatus {
     pub hidden_files: String,
     /// Text for the "Windows Activation" row.
     pub activation: String,
+    /// Text for the "Wallpaper compression" row.
+    pub wallpaper: String,
 }
 
 impl TweaksStatus {
@@ -158,6 +179,7 @@ impl TweaksStatus {
         self.dark_mode = label(dark_mode_enabled(), "Dark", "Light");
         self.file_extensions = label(file_extensions_visible(), "Shown", "Hidden");
         self.hidden_files = label(hidden_files_visible(), "Shown", "Hidden");
+        self.wallpaper = label(wallpaper_compression_enabled(), "On", "Off");
     }
 
     /// Refresh the activation status. Slow (spawns PowerShell/WMI), so it is

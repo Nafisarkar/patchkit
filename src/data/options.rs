@@ -17,7 +17,7 @@ pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str); 4] = [
+pub const TWEAKS_OPTIONS: [(&str, &str); 5] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -31,4 +31,8 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 4] = [
         "Show or hide hidden files and folders in File Explorer",
     ),
     ("Windows Activation", "Activate Windows with massgrave"),
+    (
+        "Wallpaper compression",
+        "Disable the compression of wallpapers in Windows 11/10 to improve quality",
+    ),
 ];
