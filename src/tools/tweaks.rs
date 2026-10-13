@@ -536,6 +536,14 @@ fn store_db_path() -> Option<PathBuf> {
     )
 }
 
+/// True when icacls output shows a deny ACE. Older Windows builds render it
+/// as `Everyone:(DENY)(F)`; newer builds render the same deny-special
+/// "no access" mask without the DENY keyword, as `Everyone:(N)`.
+pub(crate) fn icacls_shows_deny(out: &str) -> bool {
+    out.lines()
+        .any(|line| line.contains("(DENY)") || line.contains(":(N)"))
+}
+
 /// True when the Store database is locked for Everyone, hiding the suggested
 /// Store apps in Start menu search.
 pub fn store_search_disabled() -> Option<bool> {
@@ -545,8 +553,7 @@ pub fn store_search_disabled() -> Option<bool> {
         return Some(false);
     }
     let out = sys::run("icacls", &[&db.to_string_lossy()]).ok()?;
-    // The deny ACE shows up as "Everyone:(DENY)(F)" in icacls output.
-    Some(out.contains("DENY"))
+    Some(icacls_shows_deny(&out))
 }
 
 /// Toggle the suggested Microsoft Store apps in Start menu search results by
@@ -1145,5 +1152,22 @@ mod tests {
         assert_eq!(label(Some(true), "Dark", "Light"), "Dark");
         assert_eq!(label(Some(false), "Dark", "Light"), "Light");
         assert_eq!(label(None, "Dark", "Light"), "unknown");
+    }
+
+    #[test]
+    fn icacls_deny_detection_covers_both_spellings() {
+        // Older builds spell the deny ACE out; newer builds show the same
+        // deny-special mask as (N) without the DENY keyword.
+        assert!(icacls_shows_deny(
+            "C:\\db store.db\n    Everyone:(DENY)(F)\n    BUILTIN\\Administrators:(I)(F)"
+        ));
+        assert!(icacls_shows_deny(
+            "C:\\db store.db\n    Everyone:(N)\n    BUILTIN\\Administrators:(I)(F)"
+        ));
+        // A plain allow ACE must not read as denied.
+        assert!(!icacls_shows_deny(
+            "C:\\db store.db\n    Everyone:(F)\n    NT AUTHORITY\\SYSTEM:(I)(F)"
+        ));
+        assert!(!icacls_shows_deny(""));
     }
 }
