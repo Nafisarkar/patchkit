@@ -19,8 +19,8 @@ mod theme;
 mod tools;
 use tabs::TabManager;
 
-use crate::data::options::{CLEANING_OPTIONS, TWEAKS_OPTIONS};
-use crate::tools::{cleaning, tweaks};
+use crate::data::options::{CLEANING_OPTIONS, STORE_OPTIONS, TWEAKS_OPTIONS};
+use crate::tools::{cleaning, downloader, tweaks};
 
 /// Key hints shown at the bottom-right of the window. "magenta" refers to the
 /// highlighted rows: they need administrator rights.
@@ -33,9 +33,9 @@ const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const BANNER: &str = "\
 ██████╗  █████╗ ████████╗ ██████╗██╗  ██╗██╗  ██╗██╗████████╗
 ██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██║  ██║██║ ██╔╝██║╚══██╔══╝
-██████╔╝███████║   ██║   ██║     ███████║█████╔╝ ██║   ██║   
-██╔═══╝ ██╔══██║   ██║   ██║     ██╔══██║██╔═██╗ ██║   ██║   
-██║     ██║  ██║   ██║   ╚██████╗██║  ██║██║  ██╗██║   ██║   
+██████╔╝███████║   ██║   ██║     ███████║█████╔╝ ██║   ██║
+██╔═══╝ ██╔══██║   ██║   ██║     ██╔══██║██╔═██╗ ██║   ██║
+██║     ██║  ██║   ██║   ╚██████╗██║  ██║██║  ██╗██║   ██║
 ╚═╝     ╚═╝  ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝";
 
 /// Divider drawn between tab titles (its width drives tab click hit-testing).
@@ -47,6 +47,14 @@ const TAB_DIVIDER: &str = "   ";
 struct HitAreas {
     tab: Rect,
     list: Rect,
+}
+
+/// The cached per-tab status snapshots handed to `draw`, grouped so the draw
+/// signature stays within clippy's argument limit.
+struct Statuses<'a> {
+    cleaning: &'a cleaning::CleaningStatus,
+    tweaks: &'a tweaks::TweaksStatus,
+    store: &'a downloader::StoreStatus,
 }
 
 /// Turns mouse reporting back off on every exit path, including a panic during
@@ -65,6 +73,7 @@ fn main() -> Result<()> {
     let mut manager = TabManager::new();
     manager.add_tab("Cleaning");
     manager.add_tab("Tweaks");
+    manager.add_tab("Store");
 
     let mut table_state = TableState::default();
     table_state.select(Some(0));
@@ -117,21 +126,15 @@ fn run(
     tab_manager: &mut TabManager,
     table_state: &mut TableState,
 ) -> Result<()> {
-    // Cached UI state, refreshed only when it can actually change.
     let mut cleaning_status = cleaning::CleaningStatus::new();
     let mut tweaks_status = tweaks::TweaksStatus::new();
-    // Result of the last action, shown in the status bar.
+    let mut store_status = downloader::StoreStatus::new();
     let mut message = String::new();
-    // Whether `message` is an error (drives the red styling).
     let mut message_is_error = false;
     // A process's elevation never changes after launch, so check it once.
     let is_admin = sys::is_admin();
-    // The action currently running on a worker thread, if any.
     let mut job: Option<Job> = None;
-    // Set after a first quit press while a job is running.
     let mut quit_armed = false;
-    // Screen regions recorded by the last frame, so mouse events in this
-    // iteration can be mapped back to a tab or row.
     let mut hits = HitAreas::default();
 
     loop {
@@ -159,19 +162,21 @@ fn run(
                         is_error: message_is_error,
                     }
                 };
-                // Keep the frame's hit areas for the mouse events that follow.
                 hits = draw(
                     frame,
                     tab_manager,
                     table_state,
-                    &cleaning_status,
-                    &tweaks_status,
+                    Statuses {
+                        cleaning: &cleaning_status,
+                        tweaks: &tweaks_status,
+                        store: &store_status,
+                    },
                     is_admin,
                     status,
                 );
             })?;
 
-            // Poll events with a timeout so the spinner keeps animating.
+            // Poll with a timeout so the spinner keeps animating.
             if event::poll(Duration::from_millis(125))? {
                 // Declared before the drain loop so a quit key seen anywhere in
                 // the batch is honoured once the queue is empty.
@@ -198,7 +203,6 @@ fn run(
                                     quit_requested = true
                                 }
 
-                                // table navigation
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     let selected = table_state.selected().unwrap_or(0);
                                     if selected > 0 {
@@ -217,18 +221,17 @@ fn run(
                                 }
                                 KeyCode::PageDown => {
                                     let selected = table_state.selected().unwrap_or(0);
-                                    let last = item_count(tab_manager.get_selection())
-                                        .saturating_sub(1);
+                                    let last =
+                                        item_count(tab_manager.get_selection()).saturating_sub(1);
                                     table_state.select(Some((selected + 10).min(last)));
                                 }
                                 KeyCode::Home => table_state.select(Some(0)),
                                 KeyCode::End => {
-                                    let last = item_count(tab_manager.get_selection())
-                                        .saturating_sub(1);
+                                    let last =
+                                        item_count(tab_manager.get_selection()).saturating_sub(1);
                                     table_state.select(Some(last));
                                 }
 
-                                // run the selected action on a worker thread
                                 KeyCode::Enter => {
                                     if job.is_some() {
                                         message = "a task is still running — wait for it to finish"
@@ -238,7 +241,7 @@ fn run(
                                         let selected = match tab_manager.get_selection() {
                                             0 => pages::cleaning::action(index),
                                             1 => pages::tweaks::action(index),
-                                            _ => None,
+                                            _ => pages::store::action(index),
                                         };
                                         if let Some((action, label, needs_admin)) = selected {
                                             if needs_admin && !is_admin {
@@ -269,7 +272,7 @@ fn run(
                                     }
                                 }
 
-                                // tab navigation (start each tab at the first row)
+                                // Start each tab at the first row.
                                 KeyCode::Left | KeyCode::Char('h') => {
                                     tab_manager.prev_tab();
                                     table_state.select(Some(0));
@@ -279,7 +282,6 @@ fn run(
                                     table_state.select(Some(0));
                                 }
 
-                                // refresh the cheap status values on request
                                 KeyCode::Char('r') => {
                                     cleaning_status.refresh();
                                     tweaks_status.refresh();
@@ -296,8 +298,6 @@ fn run(
                         _ => {}
                     }
 
-                    // Stop draining as soon as a quit was requested; the
-                    // confirmation below decides whether to actually leave.
                     if quit_requested {
                         break;
                     }
@@ -308,8 +308,8 @@ fn run(
                     // require a second press to confirm.
                     if job.is_some() && !quit_armed {
                         quit_armed = true;
-                        message = "a task is still running — press q again to quit anyway"
-                            .to_string();
+                        message =
+                            "a task is still running — press q again to quit anyway".to_string();
                         message_is_error = true;
                     } else {
                         break;
@@ -318,7 +318,6 @@ fn run(
             }
         }
 
-        // Collect finished worker threads and show their result.
         if job.as_ref().is_some_and(|job| job.handle.is_finished()) {
             let job = job.take().expect("job just finished");
             let result = job
@@ -336,6 +335,7 @@ fn run(
                         tweaks_status.refresh_activation();
                     }
                 }
+                2 => store_status.refresh(),
                 _ => {}
             }
         }
@@ -348,7 +348,8 @@ fn run(
 fn item_count(tab: usize) -> usize {
     match tab {
         0 => CLEANING_OPTIONS.len(),
-        _ => TWEAKS_OPTIONS.len(),
+        1 => TWEAKS_OPTIONS.len(),
+        _ => STORE_OPTIONS.len(),
     }
 }
 
@@ -397,7 +398,6 @@ fn handle_mouse(
                     }
                 }
             } else if hits.list.contains(position) {
-                // Table rows start one line below the list area's top rule.
                 let row_in_view = (mouse.row - hits.list.y) as usize;
                 let index = table_state.offset() + row_in_view;
                 if index < item_count(tab_manager.get_selection()) {
@@ -424,11 +424,15 @@ fn draw(
     frame: &mut Frame,
     tab_manager: &TabManager,
     table_state: &mut TableState,
-    cleaning_status: &cleaning::CleaningStatus,
-    tweaks_status: &tweaks::TweaksStatus,
+    statuses: Statuses<'_>,
     is_admin: bool,
     status: StatusLine,
 ) -> HitAreas {
+    let Statuses {
+        cleaning: cleaning_status,
+        tweaks: tweaks_status,
+        store: store_status,
+    } = statuses;
     // Leave a gutter so content is not flush against the terminal edges.
     let area = frame.area().inner(Margin {
         horizontal: 2,
@@ -454,20 +458,9 @@ fn draw(
     } else {
         narrow_tagline
     };
-    let title_height = if show_banner {
-        banner_height
-    } else {
-        1
-    };
+    let title_height = if show_banner { banner_height } else { 1 };
 
-    // Rows: title, separator, tab bar, the table, the status bar.
-    let [
-        title_area,
-        rule_area,
-        tab_area,
-        body_area,
-        status_area,
-    ] = Layout::vertical([
+    let [title_area, rule_area, tab_area, body_area, status_area] = Layout::vertical([
         Constraint::Length(title_height),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -476,7 +469,6 @@ fn draw(
     ])
     .areas(area);
 
-    // Title bar: the banner on the left, a tagline on the right.
     let [name_area, tagline_area] = Layout::horizontal([
         Constraint::Min(0),
         Constraint::Length(tagline.chars().count() as u16),
@@ -510,12 +502,10 @@ fn draw(
         .style(theme::dim())
         .render(tagline_bottom, frame.buffer_mut());
 
-    // Separator bar under the title.
     Paragraph::new("─".repeat(rule_area.width as usize))
         .style(theme::dim())
         .render(rule_area, frame.buffer_mut());
 
-    // Tab bar, with the active tab in the accent colour.
     Tabs::new(
         tab_manager
             .titles()
@@ -530,11 +520,10 @@ fn draw(
     .select(tab_manager.get_selection())
     .render(tab_area, frame.buffer_mut());
 
-    // Body: the table of the currently selected tab.
     match tab_manager.get_selection() {
         0 => pages::cleaning::draw(frame, body_area, table_state, cleaning_status),
         1 => pages::tweaks::draw(frame, body_area, table_state, tweaks_status),
-        _ => {}
+        _ => pages::store::draw(frame, body_area, table_state, store_status),
     }
 
     // Status bar: the last action's message on the left, key hints on the
@@ -551,7 +540,11 @@ fn draw(
         StatusLine::Running(text) => (text, false),
         StatusLine::Message { text, is_error } => (text, is_error),
     };
-    let style = if is_error { theme::error() } else { theme::dim() };
+    let style = if is_error {
+        theme::error()
+    } else {
+        theme::dim()
+    };
     Paragraph::new(text)
         .style(style)
         .render(message_area, frame.buffer_mut());
@@ -560,9 +553,8 @@ fn draw(
         .style(theme::dim())
         .render(hints_area, frame.buffer_mut());
 
-    // Report the regions a mouse event can land in: the tab bar itself, and the
-    // table's rows. `body_area` is split by `action_table` into a one-row rule
-    // plus the rows, so the list starts one line below `body_area`.
+    // `body_area` is split by `action_table` into a one-row rule plus the rows,
+    // so the list starts one line below `body_area`.
     HitAreas {
         tab: tab_area,
         list: Rect::new(

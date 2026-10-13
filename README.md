@@ -1,8 +1,8 @@
 # PatchKit
 
-A small Windows cleanup and tweaks TUI. One terminal window, two tabs: free up
-disk space and flip common Windows settings without digging through Control
-Panel or the registry.
+A small Windows cleanup, tweaks and download TUI. One terminal window, three
+tabs: free up disk space, flip common Windows settings, and download useful apps,
+all without digging through Control Panel or the registry.
 
 ![Rust](https://img.shields.io/badge/rust-stable-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)

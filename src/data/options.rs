@@ -7,7 +7,7 @@
 /// the status bar.
 pub type Action = fn() -> Result<String, String>;
 
-use crate::tools::{cleaning, tweaks};
+use crate::tools::{cleaning, downloader, tweaks};
 
 /// Rows of the Cleaning tab, in display order.
 pub const CLEANING_OPTIONS: [(&str, &str, bool, Option<Action>); 4] = [
@@ -196,3 +196,11 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
         Some(tweaks::run_ooshutup),
     ),
 ];
+
+/// Rows of the Store tab, in display order.
+pub const STORE_OPTIONS: [(&str, &str, bool, Option<Action>); 1] = [(
+    "mpv",
+    "Media player — downloads the latest Windows build to your Downloads folder",
+    false,
+    Some(downloader::download_mpv),
+)];

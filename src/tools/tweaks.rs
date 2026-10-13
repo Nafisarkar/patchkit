@@ -10,6 +10,8 @@
 use crate::sys;
 use std::path::{Path, PathBuf};
 
+use super::label;
+
 // ------------------------------------------------------------------ registry
 
 /// `HKCU\...\Themes\Personalize` — holds the app/system theme values.
@@ -784,7 +786,6 @@ fn dism_enable_feature(feature: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// True when the Hyper-V optional feature is enabled.
 pub fn hyperv_enabled() -> Option<bool> {
     dism_feature_enabled(HYPERV_FEATURE)
 }
@@ -803,7 +804,6 @@ pub fn enable_hyperv() -> Result<String, String> {
 const WSL_FEATURE: &str = "Microsoft-Windows-Subsystem-Linux";
 const WSL_VM_PLATFORM: &str = "VirtualMachinePlatform";
 
-/// True when the Windows Subsystem for Linux feature is enabled.
 pub fn wsl_enabled() -> Option<bool> {
     dism_feature_enabled(WSL_FEATURE)
 }
@@ -1125,15 +1125,6 @@ impl TweaksStatus {
     }
 }
 
-/// Turn an `Option<bool>` into a display string: `yes` for `Some(true)`, `no`
-/// for `Some(false)`, and "unknown" for `None`.
-fn label(value: Option<bool>, yes: &str, no: &str) -> String {
-    match value {
-        Some(true) => yes.to_string(),
-        Some(false) => no.to_string(),
-        None => "unknown".to_string(),
-    }
-}
 
 #[cfg(test)]
 mod tests {
