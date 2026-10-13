@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 28] = [
+pub static STORE_OPTIONS: [StoreApp; 29] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -313,6 +313,11 @@ pub static STORE_OPTIONS: [StoreApp; 28] = [
         "oxdm",
         "Download manager",
         "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
+    ),
+    StoreApp::new(
+        "Steam",
+        "Game store and launcher",
+        "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
     ),
     StoreApp::new(
         "Dorion",
