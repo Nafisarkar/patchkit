@@ -108,15 +108,22 @@ fn seven_zip() -> Result<String, String> {
     Ok(tool.to_string_lossy().into_owned())
 }
 
-/// Run an installer: `.msi` through `msiexec`, `.exe` with the NSIS `/S` flag.
+/// Run an installer: `.msi` through `msiexec` (passive, so it can raise the
+/// elevation prompt), `.exe` with the NSIS `/S` flag. Codes for "installed" and
+/// "already installed" all count as success.
 fn run_installer(file: &Path) -> Result<(), String> {
     let path = file.to_string_lossy().to_string();
-    if path.to_ascii_lowercase().ends_with(".msi") {
-        sys::run("msiexec.exe", &["/i", &path, "/passive", "/norestart"])?;
+    let code = if path.to_ascii_lowercase().ends_with(".msi") {
+        sys::exit_code("msiexec.exe", &["/i", &path, "/passive", "/norestart"])?
     } else {
-        sys::run(&path, &["/S"])?;
+        sys::exit_code(&path, &["/S"])?
+    };
+    // 0 = installed, 3010 = installed (reboot needed), 1638 = already installed.
+    if matches!(code, 0 | 3010 | 1638) {
+        Ok(())
+    } else {
+        Err(format!("installer exited with code {code}"))
     }
-    Ok(())
 }
 
 /// Download `url` into `dir` and return the saved path. `-O -J` takes the name

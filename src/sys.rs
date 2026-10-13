@@ -49,6 +49,12 @@ pub fn run(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Run a command and return its exit code, whatever it is. Used for installers,
+/// where codes like 1638 ("already installed") are not failures.
+pub fn exit_code(program: &str, args: &[&str]) -> Result<i32, String> {
+    Ok(run_capture(program, args)?.status.code().unwrap_or(-1))
+}
+
 /// Run a command and return the raw output regardless of exit status.
 fn run_capture(program: &str, args: &[&str]) -> Result<Output, String> {
     Command::new(program)
