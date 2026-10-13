@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 33] = [
+pub static STORE_OPTIONS: [StoreApp; 34] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -328,6 +328,12 @@ pub static STORE_OPTIONS: [StoreApp; 33] = [
         "WinRAR",
         "Archive manager",
         "https://www.rarlab.com/rar/winrar-x64-723.exe",
+    ),
+    StoreApp::with_args(
+        "Bulk Crap Uninstaller",
+        "Bulk uninstaller for Windows",
+        "https://github.com/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest/download/BCUninstaller_*_setup.exe",
+        &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
     ),
     StoreApp::new(
         "Steam",
