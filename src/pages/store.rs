@@ -78,3 +78,21 @@ fn header_row(title: &str) -> Row<'static> {
     ])
     .style(theme::heading())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_interleave_headers_and_apps() {
+        let apps: usize = STORE_CATEGORIES.iter().map(|c| c.apps.len()).sum();
+        let categories = STORE_CATEGORIES.len();
+        assert_eq!(row_count(), apps + categories);
+        // The first row is a header; the row after it is the first app.
+        assert!(is_header(0));
+        assert!(!is_header(1));
+        assert_eq!(action(1).map(|(_, name, _)| name), Some("VSCode"));
+        // A header row has no action.
+        assert!(action(0).is_none());
+    }
+}

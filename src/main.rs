@@ -19,7 +19,7 @@ mod theme;
 mod tools;
 use tabs::TabManager;
 
-use crate::data::options::{CLEANING_OPTIONS, STORE_OPTIONS, TWEAKS_OPTIONS};
+use crate::data::options::{CLEANING_OPTIONS, STORE_CATEGORIES, TWEAKS_OPTIONS};
 use crate::tools::{cleaning, downloader, tweaks};
 
 /// Key hints shown at the bottom-right of the window. "magenta" refers to the
@@ -128,7 +128,7 @@ fn run(
 ) -> Result<()> {
     let mut cleaning_status = cleaning::CleaningStatus::new();
     let mut tweaks_status = tweaks::TweaksStatus::new();
-    let mut store_status = downloader::StoreStatus::new(&STORE_OPTIONS);
+    let mut store_status = downloader::StoreStatus::new(&STORE_CATEGORIES);
     let mut message = String::new();
     let mut message_is_error = false;
     // A process's elevation never changes after launch, so check it once.
@@ -204,31 +204,23 @@ fn run(
                                 }
 
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    let selected = table_state.selected().unwrap_or(0);
-                                    if selected > 0 {
-                                        table_state.select(Some(selected - 1));
-                                    }
+                                    step_selection(tab_manager.get_selection(), table_state, -1);
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    let selected = table_state.selected().unwrap_or(0);
-                                    if selected + 1 < item_count(tab_manager.get_selection()) {
-                                        table_state.select(Some(selected + 1));
-                                    }
+                                    step_selection(tab_manager.get_selection(), table_state, 1);
                                 }
                                 KeyCode::PageUp => {
-                                    let selected = table_state.selected().unwrap_or(0);
-                                    table_state.select(Some(selected.saturating_sub(10)));
+                                    step_selection(tab_manager.get_selection(), table_state, -10);
                                 }
                                 KeyCode::PageDown => {
-                                    let selected = table_state.selected().unwrap_or(0);
-                                    let last =
-                                        item_count(tab_manager.get_selection()).saturating_sub(1);
-                                    table_state.select(Some((selected + 10).min(last)));
+                                    step_selection(tab_manager.get_selection(), table_state, 10);
                                 }
-                                KeyCode::Home => table_state.select(Some(0)),
+                                KeyCode::Home => {
+                                    let first = first_row(tab_manager.get_selection());
+                                    table_state.select(Some(first));
+                                }
                                 KeyCode::End => {
-                                    let last =
-                                        item_count(tab_manager.get_selection()).saturating_sub(1);
+                                    let last = last_row(tab_manager.get_selection());
                                     table_state.select(Some(last));
                                 }
 
@@ -272,14 +264,16 @@ fn run(
                                     }
                                 }
 
-                                // Start each tab at the first row.
+                                // Start each tab at its first selectable row.
                                 KeyCode::Left | KeyCode::Char('h') => {
                                     tab_manager.prev_tab();
-                                    table_state.select(Some(0));
+                                    let first = first_row(tab_manager.get_selection());
+                                    table_state.select(Some(first));
                                 }
                                 KeyCode::Right | KeyCode::Char('l') => {
                                     tab_manager.next_tab();
-                                    table_state.select(Some(0));
+                                    let first = first_row(tab_manager.get_selection());
+                                    table_state.select(Some(first));
                                 }
 
                                 KeyCode::Char('r') => {
@@ -335,7 +329,7 @@ fn run(
                         tweaks_status.refresh_activation();
                     }
                 }
-                2 => store_status.refresh(&STORE_OPTIONS),
+                2 => store_status.refresh(&STORE_CATEGORIES),
                 _ => {}
             }
         }
@@ -344,13 +338,50 @@ fn run(
     Ok(())
 }
 
-/// Number of selectable rows on the given tab.
+/// Number of rows on the given tab (the Store's rows include category headers).
 fn item_count(tab: usize) -> usize {
     match tab {
         0 => CLEANING_OPTIONS.len(),
         1 => TWEAKS_OPTIONS.len(),
-        _ => STORE_OPTIONS.len(),
+        _ => pages::store::row_count(),
     }
+}
+
+/// True when `row` is a Store category header, which the cursor skips.
+fn is_header(tab: usize, row: usize) -> bool {
+    tab == 2 && pages::store::is_header(row)
+}
+
+/// The first selectable row on `tab`.
+fn first_row(tab: usize) -> usize {
+    (0..item_count(tab))
+        .find(|&row| !is_header(tab, row))
+        .unwrap_or(0)
+}
+
+/// The last selectable row on `tab`.
+fn last_row(tab: usize) -> usize {
+    (0..item_count(tab))
+        .rev()
+        .find(|&row| !is_header(tab, row))
+        .unwrap_or(0)
+}
+
+/// Move the selection by `step` rows, skipping Store category headers.
+fn step_selection(tab: usize, state: &mut TableState, step: isize) {
+    let count = item_count(tab) as isize;
+    let direction = step.signum();
+    if count == 0 || direction == 0 {
+        return;
+    }
+    let mut row = (state.selected().unwrap_or(0) as isize + step).clamp(0, count - 1);
+    while is_header(tab, row as usize) {
+        row += direction;
+        if row < 0 || row >= count {
+            return;
+        }
+    }
+    state.select(Some(row as usize));
 }
 
 /// Which tab a column falls on, if any. Mirrors how `Tabs` lays titles out:
@@ -378,13 +409,10 @@ fn handle_mouse(
     let position = Position::new(mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::ScrollUp => {
-            let selected = table_state.selected().unwrap_or(0);
-            table_state.select(Some(selected.saturating_sub(1)));
+            step_selection(tab_manager.get_selection(), table_state, -1);
         }
         MouseEventKind::ScrollDown => {
-            let selected = table_state.selected().unwrap_or(0);
-            let last = item_count(tab_manager.get_selection()).saturating_sub(1);
-            table_state.select(Some((selected + 1).min(last)));
+            step_selection(tab_manager.get_selection(), table_state, 1);
         }
         MouseEventKind::Down(MouseButton::Left) => {
             if hits.tab.contains(position) {
@@ -394,13 +422,15 @@ fn handle_mouse(
                 if let Some(index) = tab_index_at(tab_manager, mouse.column, hits.tab) {
                     if index != tab_manager.get_selection() {
                         tab_manager.select(index);
-                        table_state.select(Some(0));
+                        let first = first_row(index);
+                        table_state.select(Some(first));
                     }
                 }
             } else if hits.list.contains(position) {
                 let row_in_view = (mouse.row - hits.list.y) as usize;
                 let index = table_state.offset() + row_in_view;
-                if index < item_count(tab_manager.get_selection()) {
+                let tab = tab_manager.get_selection();
+                if index < item_count(tab) && !is_header(tab, index) {
                     table_state.select(Some(index));
                 }
             }
