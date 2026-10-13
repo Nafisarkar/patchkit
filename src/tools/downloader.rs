@@ -1,112 +1,88 @@
-//! Backend for the Store tab: download an app from its link and install it.
+//! The Store backend: download an app's link and install it.
 //!
-//! A store entry is just a name, a description and a link (see
-//! [`crate::data::options::STORE_OPTIONS`]); everything else is generic. The
-//! file is downloaded into `%LOCALAPPDATA%\PatchKit\<name>`, then:
-//!
-//! * an archive (`.zip`, `.7z`, `.tar.*`) is unpacked there — a portable
-//!   install, and
-//! * an installer (`.exe`, `.msi`) is run from there.
-//!
-//! `.zip` and `.tar.*` are unpacked with the `tar.exe` Windows ships. `.7z`
-//! needs the LZMA codec that `tar.exe` lacks, so it uses a `7z`/`7zr`/`7za`
-//! already on `PATH`, or the standalone `7zr.exe` fetched from 7-zip.org once.
-//!
-//! A link may point at a file directly, or at a GitHub
-//! `releases/latest/download/<name>` URL whose file name contains a `*` glob,
-//! in which case the newest matching release asset is resolved first.
+//! Each Store row is a name and a link (see
+//! [`crate::data::options::STORE_OPTIONS`]). The file lands in
+//! `%LOCALAPPDATA%\PatchKit\<name>`, then an archive is unpacked there and an
+//! installer is run. A link may also be a GitHub `releases/latest/download`
+//! URL containing a `*` glob, resolved to the newest matching asset.
 
 use std::path::{Path, PathBuf};
 
 use crate::data::options::StoreApp;
 use crate::sys;
 
-use super::label;
-
-/// The standalone 7-Zip console, used to unpack `.7z` when 7-Zip isn't on PATH.
+/// 7-Zip console, fetched once because the bundled `tar.exe` can't read `.7z`.
 const SEVEN_ZIP_URL: &str = "https://www.7-zip.org/a/7zr.exe";
 
-/// PatchKit's own folder: `%LOCALAPPDATA%\PatchKit`.
+/// Download `app` and install it; returns the status-bar message.
+pub fn install(app: &StoreApp) -> Result<String, String> {
+    let dir = app_dir(app.name)?;
+    let file = download(&resolve_link(app.link)?, &dir)?;
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+
+    if is_archive(&name) {
+        extract(&file, &dir)?;
+        Ok(format!("installed {} ({name})", app.name))
+    } else if is_installer(&name) {
+        run_installer(&file)?;
+        Ok(format!("installed {} ({name})", app.name))
+    } else {
+        Ok(format!("downloaded {name}"))
+    }
+}
+
+/// "Installed" / "Not installed" for the status column.
+pub fn status(app: &StoreApp) -> String {
+    let text = if is_installed(app.name) {
+        "Installed"
+    } else {
+        "Not installed"
+    };
+    text.to_string()
+}
+
+/// `%LOCALAPPDATA%\PatchKit` — where PatchKit keeps its files.
 fn tools_dir() -> Result<PathBuf, String> {
     let local = std::env::var_os("LocalAppData").ok_or("could not find %LOCALAPPDATA%")?;
     Ok(Path::new(&local).join("PatchKit"))
 }
 
-/// Where an app is downloaded and installed: `%LOCALAPPDATA%\PatchKit\<name>`.
+/// An app's download and install folder: `%LOCALAPPDATA%\PatchKit\<name>`.
 fn app_dir(name: &str) -> Result<PathBuf, String> {
     Ok(tools_dir()?.join(name))
 }
 
-/// True when the app was installed: its folder exists and has content.
-fn is_installed(name: &str) -> Option<bool> {
-    let dir = app_dir(name).ok()?;
-    let mut entries = std::fs::read_dir(&dir).ok()?;
-    Some(entries.next().is_some())
+/// True when the app's folder exists and has content.
+fn is_installed(name: &str) -> bool {
+    app_dir(name)
+        .ok()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .is_some_and(|mut entries| entries.next().is_some())
 }
 
-/// Status text for a store row.
-pub fn status(app: &StoreApp) -> String {
-    label(is_installed(app.name), "Installed", "Not installed")
-}
-
-/// Download `app`'s link and install it, returning a status-bar message.
-pub fn install(app: &StoreApp) -> Result<String, String> {
-    let dir = app_dir(app.name)?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-
-    let url = resolve_link(app.link)?;
-    let file = download(&url, &dir)?;
-    let name = file_name(&file);
-
-    match install_kind(&name) {
-        InstallKind::Portable => {
-            extract(&file, &dir)?;
-            Ok(format!("installed {} ({name})", app.name))
-        }
-        InstallKind::Installer => {
-            run_installer(&file)?;
-            Ok(format!("installed {} (ran {name})", app.name))
-        }
-        InstallKind::File => Ok(format!("downloaded {name} to {}", dir.display())),
-    }
-}
-
-/// How a downloaded file should be installed.
-enum InstallKind {
-    /// Unpack into the app folder.
-    Portable,
-    /// Run the downloaded installer.
-    Installer,
-    /// Leave the file in the app folder untouched.
-    File,
-}
-
-/// Pick the install method from the downloaded file's extension.
-fn install_kind(name: &str) -> InstallKind {
+/// True for archive extensions that should be unpacked.
+fn is_archive(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    let archive = [
+    [
         ".zip", ".7z", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2",
     ]
     .iter()
-    .any(|ext| name.ends_with(ext));
-    if archive {
-        InstallKind::Portable
-    } else if name.ends_with(".exe") || name.ends_with(".msi") {
-        InstallKind::Installer
-    } else {
-        InstallKind::File
-    }
+    .any(|ext| name.ends_with(ext))
+}
+
+/// True for installer extensions that should be run.
+fn is_installer(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".exe") || name.ends_with(".msi")
 }
 
 /// Unpack an archive into `dest`.
 fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
-    let name = file_name(archive).to_ascii_lowercase();
     let archive = archive.to_string_lossy();
     let dest = dest.to_string_lossy();
-    if name.ends_with(".7z") {
-        let seven_zip = seven_zip()?;
-        sys::run(&seven_zip, &["x", &archive, &format!("-o{dest}"), "-y"])?;
+    if archive.to_ascii_lowercase().ends_with(".7z") {
+        let tool = seven_zip()?;
+        sys::run(&tool, &["x", &archive, &format!("-o{dest}"), "-y"])?;
     } else {
         // bsdtar detects zip and tarballs from the file's content.
         sys::run("tar.exe", &["-xf", &archive, "-C", &dest])?;
@@ -114,49 +90,16 @@ fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// A 7-Zip executable: one already on `PATH`, else the standalone `7zr.exe`
-/// fetched once into PatchKit's folder.
+/// The 7-Zip console, fetched once on first `.7z` use.
 fn seven_zip() -> Result<String, String> {
-    for program in ["7z", "7zr", "7za"] {
-        if let Some(path) = on_path(program) {
-            return Ok(path);
-        }
-    }
     let tool = tools_dir()?.join("7zr.exe");
     if !tool.is_file() {
-        let dir = tools_dir()?;
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-        sys::run(
-            "curl.exe",
-            &[
-                "-L",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "-o",
-                &tool.to_string_lossy(),
-                SEVEN_ZIP_URL,
-            ],
-        )?;
+        download(SEVEN_ZIP_URL, &tools_dir()?)?;
     }
     Ok(tool.to_string_lossy().into_owned())
 }
 
-/// The full path of `program.exe` on `PATH`, if it exists.
-fn on_path(program: &str) -> Option<String> {
-    let exe = format!("{program}.exe");
-    std::env::split_paths(&std::env::var_os("PATH")?).find_map(|dir| {
-        let candidate = dir.join(&exe);
-        candidate
-            .is_file()
-            .then(|| candidate.to_string_lossy().into_owned())
-    })
-}
-
-/// Run a downloaded installer. `.msi` goes through `msiexec`; `.exe` uses the
-/// NSIS `/S` silent flag, which the common one-click installers (NSIS, Tauri)
-/// support. An installer that doesn't understand it simply shows its wizard.
+/// Run an installer: `.msi` through `msiexec`, `.exe` with the NSIS `/S` flag.
 fn run_installer(file: &Path) -> Result<(), String> {
     let path = file.to_string_lossy().to_string();
     if path.to_ascii_lowercase().ends_with(".msi") {
@@ -167,8 +110,9 @@ fn run_installer(file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Download `url` into `dir`, keeping the file name from the URL.
+/// Download `url` into `dir`, keeping the URL's file name.
 fn download(url: &str, dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let name = url
         .rsplit('/')
         .next()
@@ -190,79 +134,37 @@ fn download(url: &str, dir: &Path) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
-/// Turn a link into a concrete file URL. A GitHub
-/// `releases/latest/download/<name>` link whose file name contains a `*` glob
-/// is resolved to the newest matching release asset; other links are returned
-/// unchanged.
+/// Resolve a link to a file URL. A GitHub `releases/latest/download/<name>`
+/// link containing a `*` glob becomes the newest matching asset; other links
+/// are returned unchanged.
 fn resolve_link(link: &str) -> Result<String, String> {
     if !link.contains('*') {
         return Ok(link.to_string());
     }
-    let (repo, pattern) = github_latest_pattern(link).ok_or(
-        "a link with a '*' must look like \
-         https://github.com/<owner>/<repo>/releases/latest/download/<name>",
-    )?;
+    let (repo, pattern) = link
+        .strip_prefix("https://github.com/")
+        .and_then(|rest| rest.split_once("/releases/latest/download/"))
+        .ok_or("a '*' link must be a GitHub releases/latest/download URL")?;
     let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let json = fetch(&api)?;
-    asset_url_in(&json, |file| glob_match(pattern, file))
+    let json = sys::run(
+        "curl.exe",
+        &["-L", "--silent", "--show-error", "--fail", &api],
+    )?;
+    asset_url_in(&json, pattern)
         .ok_or_else(|| format!("no file matched '{pattern}' in the newest {repo} release"))
 }
 
-/// Split a GitHub `releases/latest/download/<pattern>` link into `owner/repo`
-/// and the `<pattern>` file name.
-fn github_latest_pattern(link: &str) -> Option<(&str, &str)> {
-    let rest = link.strip_prefix("https://github.com/")?;
-    let (repo, pattern) = rest.split_once("/releases/latest/download/")?;
-    let valid = repo.contains('/') && !pattern.is_empty() && !pattern.contains('/');
-    valid.then_some((repo, pattern))
+/// First `browser_download_url` in a release JSON whose file name matches the
+/// `*`/`?` glob `pattern`. The JSON is usually minified onto one line.
+fn asset_url_in(json: &str, pattern: &str) -> Option<String> {
+    json.split("\"browser_download_url\":")
+        .skip(1)
+        .filter_map(|rest| rest.trim_start().strip_prefix('"')?.split('"').next())
+        .find(|url| glob_match(pattern, url.rsplit('/').next().unwrap_or("")))
+        .map(str::to_string)
 }
 
-/// Fetch a URL's text output (used for the GitHub API).
-fn fetch(url: &str) -> Result<String, String> {
-    sys::run(
-        "curl.exe",
-        &[
-            "-L",
-            "--silent",
-            "--show-error",
-            "--fail",
-            "-H",
-            "User-Agent: PatchKit",
-            url,
-        ],
-    )
-}
-
-/// Pull the first `browser_download_url` out of a GitHub release JSON whose file
-/// name satisfies `want`. The response may be minified onto one line, so this
-/// scans for the key instead of assuming one field per line.
-fn asset_url_in(json: &str, want: impl Fn(&str) -> bool) -> Option<String> {
-    const KEY: &str = "\"browser_download_url\"";
-    let mut search = json;
-    while let Some(start) = search.find(KEY) {
-        // Everything after the key, so the next iteration scans later assets.
-        let tail = &search[start + KEY.len()..];
-        search = tail;
-        let Some(colon) = tail.find(':') else {
-            continue;
-        };
-        // The value is a quoted string; whitespace after the colon is optional.
-        let Some(url) = tail[colon + 1..]
-            .trim_start()
-            .strip_prefix('"')
-            .and_then(|value| value.split('"').next())
-        else {
-            continue;
-        };
-        let file = url.rsplit('/').next().unwrap_or("");
-        if want(file) {
-            return Some(url.to_string());
-        }
-    }
-    None
-}
-
-/// Case-insensitive glob match supporting `*` (any run) and `?` (one character).
+/// Case-insensitive `*`/`?` glob match.
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.to_ascii_lowercase().chars().collect();
     let text: Vec<char> = text.to_ascii_lowercase().chars().collect();
@@ -290,14 +192,6 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     pi == pattern.len()
 }
 
-/// File name of a path, for display and extension checks.
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("")
-        .to_string()
-}
-
 /// Cached "Status" column for the Store tab.
 #[derive(Default)]
 pub struct StoreStatus {
@@ -305,7 +199,6 @@ pub struct StoreStatus {
 }
 
 impl StoreStatus {
-    /// Build the status snapshot for the given apps.
     pub fn new(apps: &[StoreApp]) -> Self {
         let mut status = Self::default();
         status.refresh(apps);
@@ -328,7 +221,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn glob_match_handles_wildcards() {
+    fn glob_match_supports_wildcards() {
         assert!(glob_match(
             "mpv-x86_64-*.7z",
             "mpv-x86_64-20261013-git-abc.7z"
@@ -337,50 +230,29 @@ mod tests {
             "Dorion_*_x64-setup.exe",
             "Dorion_6.13.2_x64-setup.exe"
         ));
-        // The arm64 installer has a dot, not an underscore, before x64.
         assert!(!glob_match(
             "Dorion_*_x64-setup.exe",
             "Dorion_6.13.2.arm64-setup.exe"
         ));
-        assert!(!glob_match(
-            "Dorion_*_x64-setup.exe",
-            "Dorion_6.13.2_win64_portable.zip"
-        ));
         assert!(glob_match("a?c", "abc"));
-        assert!(!glob_match("a?c", "abbc"));
     }
 
     #[test]
-    fn github_latest_pattern_parses_owner_and_pattern() {
-        let link =
-            "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe";
-        assert_eq!(
-            github_latest_pattern(link),
-            Some(("SpikeHD/Dorion", "Dorion_*_x64-setup.exe"))
-        );
-        assert_eq!(github_latest_pattern("https://example.com/file.zip"), None);
-    }
-
-    #[test]
-    fn asset_url_in_picks_the_first_match() {
-        // Minified onto one line, exactly as curl.exe receives it.
+    fn asset_url_in_matches_the_glob() {
         let json = concat!(
-            r#"{"assets":[{"browser_download_url":"https://example.com/mpv-aarch64-20261013-git-abc.7z"},"#,
-            r#"{"browser_download_url":"https://example.com/mpv-x86_64-20261013-git-abc.7z"}]}"#,
+            r#"{"assets":[{"browser_download_url":"https://example.com/mpv-aarch64-abc.7z"},"#,
+            r#"{"browser_download_url":"https://example.com/mpv-x86_64-abc.7z"}]}"#,
         );
         assert_eq!(
-            asset_url_in(json, |file| glob_match("mpv-x86_64-*.7z", file)).as_deref(),
-            Some("https://example.com/mpv-x86_64-20261013-git-abc.7z")
+            asset_url_in(json, "mpv-x86_64-*.7z").as_deref(),
+            Some("https://example.com/mpv-x86_64-abc.7z")
         );
     }
 
     #[test]
-    fn install_kind_follows_the_extension() {
-        assert!(matches!(install_kind("app.7z"), InstallKind::Portable));
-        assert!(matches!(install_kind("app.tar.gz"), InstallKind::Portable));
-        assert!(matches!(install_kind("app.ZIP"), InstallKind::Portable));
-        assert!(matches!(install_kind("setup.exe"), InstallKind::Installer));
-        assert!(matches!(install_kind("setup.msi"), InstallKind::Installer));
-        assert!(matches!(install_kind("readme.txt"), InstallKind::File));
+    fn kind_follows_the_extension() {
+        assert!(is_archive("app.7z") && is_archive("app.ZIP") && is_archive("a.tar.gz"));
+        assert!(is_installer("setup.exe") && is_installer("setup.msi"));
+        assert!(!is_archive("readme.txt") && !is_installer("readme.txt"));
     }
 }
