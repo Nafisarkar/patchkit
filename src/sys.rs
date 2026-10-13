@@ -3,6 +3,7 @@
 //! deleting the contents of a directory.
 
 use std::fs;
+use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -27,7 +28,7 @@ pub fn is_admin() -> bool {
             token,
             TokenElevation,
             Some(&mut elevation as *mut TOKEN_ELEVATION as *mut _),
-            u32::try_from(size_of::<TOKEN_ELEVATION>()).unwrap_or(0),
+            size_of::<TOKEN_ELEVATION>() as u32,
             &mut size,
         )
         .is_ok();
@@ -80,16 +81,24 @@ fn failure_message(program: &str, out: &Output) -> String {
 }
 
 /// Run a PowerShell script (used for appx/service operations with no CLI).
+/// Forces UTF-8 console output so non-ASCII text survives the lossy UTF-8
+/// conversion in [`run`].
 pub fn powershell(script: &str) -> Result<String, String> {
     run(
         "powershell",
-        &["-NoProfile", "-NonInteractive", "-Command", script],
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("[Console]::OutputEncoding=[Text.Encoding]::UTF8; {script}"),
+        ],
     )
 }
 
 /// Tell running applications that a user setting changed, so tweaks such as
-/// the light/dark theme apply without a re-login.
-pub fn broadcast_setting_change() -> Result<(), String> {
+/// the light/dark theme apply without a re-login. The broadcast result is
+/// best-effort by design, so there is nothing to handle here.
+pub fn broadcast_setting_change() {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
@@ -108,16 +117,13 @@ pub fn broadcast_setting_change() -> Result<(), String> {
             None,
         );
     }
-    Ok(())
 }
 
-/// Restart Windows Explorer so shell registry changes take effect.
+/// Restart Windows Explorer so shell registry changes take effect. A failing
+/// taskkill only means Explorer was not running, which is fine.
 pub fn restart_explorer() -> Result<(), String> {
     let _ = run("taskkill", &["/f", "/im", "explorer.exe"]);
-    std::process::Command::new("explorer.exe")
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to restart explorer: {e}"))
+    spawn("explorer.exe", &[])
 }
 
 // -------------------------------------------------------------------- format
@@ -168,7 +174,10 @@ impl ClearReport {
 /// Delete everything inside `path` (keeps the directory itself).
 pub fn clear_dir(path: &Path) -> Result<ClearReport, String> {
     if !path.is_dir() {
-        return Err(format!("{} does not exist", path.display()));
+        return Err(format!(
+            "{} is not a directory (or not accessible)",
+            path.display()
+        ));
     }
     let mut report = ClearReport::default();
     clear_into(path, &mut report);
@@ -185,7 +194,11 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
             return;
         }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            report.skipped += 1;
+            continue;
+        };
         let path = entry.path();
         let Ok(meta) = entry.metadata() else {
             report.skipped += 1;
@@ -194,7 +207,7 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
         if meta.is_dir() {
             // A junction or symlink is only a link, not a real folder: remove
             // the link itself and never recurse through it.
-            if is_reparse_point(&path) {
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
                 if fs::remove_dir(&path).is_ok() {
                     report.dirs += 1;
                 } else {
@@ -202,9 +215,9 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
                 }
                 continue;
             }
-            let (files, dirs, bytes) = subtree_stats(&path);
             match fs::remove_dir_all(&path) {
                 Ok(()) => {
+                    let (files, dirs, bytes) = dir_stats(&path);
                     report.files += files;
                     report.dirs += dirs + 1;
                     report.bytes += bytes;
@@ -214,6 +227,8 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
                     clear_into(&path, report);
                     if fs::remove_dir(&path).is_ok() {
                         report.dirs += 1;
+                    } else {
+                        report.skipped += 1;
                     }
                 }
             }
@@ -234,15 +249,6 @@ fn clear_into(path: &Path, report: &mut ClearReport) {
 /// delete another location's files.
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
-/// True when `path` is a symlink or a junction (a reparse point).
-fn is_reparse_point(path: &Path) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    match fs::symlink_metadata(path) {
-        Ok(meta) => meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0,
-        Err(_) => false,
-    }
-}
-
 /// File count, directory count and total byte size of a directory tree (best
 /// effort; junction and symlink targets are not followed).
 pub fn dir_stats(path: &Path) -> (u64, u64, u64) {
@@ -250,14 +256,17 @@ pub fn dir_stats(path: &Path) -> (u64, u64, u64) {
         let Ok(entries) = fs::read_dir(path) else {
             return;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
             let path = entry.path();
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
             // Never walk through a junction or symlink: it can point at an
             // ancestor (endless loop) or somewhere outside this tree.
-            if is_reparse_point(&path) {
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
                 continue;
             }
             if meta.is_dir() {
@@ -274,9 +283,4 @@ pub fn dir_stats(path: &Path) -> (u64, u64, u64) {
     let mut bytes = 0;
     walk(path, &mut files, &mut dirs, &mut bytes);
     (files, dirs, bytes)
-}
-
-/// Count files, directories and bytes under `path` (see [`dir_stats`]).
-fn subtree_stats(path: &Path) -> (u64, u64, u64) {
-    dir_stats(path)
 }

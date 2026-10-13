@@ -1,5 +1,5 @@
-//! The Tweaks tab: toggles the theme and File Explorer options, and can
-//! activate Windows.
+//! The Tweaks tab: theme, File Explorer and privacy toggles, preinstalled app
+//! removal, Edge debloat, and Windows activation.
 
 use ratatui::{
     Frame,
@@ -23,6 +23,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
                 "Show Hidden Files" => status.hidden_files.as_str(),
                 "Windows Activation" => status.activation.as_str(),
                 "Wallpaper compression" => status.wallpaper.as_str(),
+                "Edge Debloat" => status.edge.as_str(),
+                "Start Menu Bing Search" => status.bing_search.as_str(),
+                "Remove Preinstalled Apps" => "—",
                 _ => " ",
             };
 
@@ -44,13 +47,15 @@ pub fn activate(index: usize, status: &mut TweaksStatus) -> Result<String, Strin
         0 => tweaks::toggle_dark_mode(),
         1 => tweaks::show_file_extensions(),
         2 => tweaks::toggle_hidden_files(),
-        4 => tweaks::wallpaper_compression_set_max(),
         3 => {
             let result = tweaks::activate_windows();
             status.refresh_activation();
             result
         }
+        4 => tweaks::wallpaper_compression_set_max(),
         5 => tweaks::remove_preinstalled_apps(),
+        6 => tweaks::edge_debloat(),
+        7 => tweaks::toggle_bing_search(),
         _ => return Ok(String::new()),
     };
 

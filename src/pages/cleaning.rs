@@ -21,6 +21,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Clea
                 "Recycle Bin" => status.recycle_bin.as_str(),
                 "Windows Temp" => status.windows_temp.as_str(),
                 "User Temp" => status.user_temp.as_str(),
+                "Disk Clean" => "—",
                 _ => " ",
             };
 

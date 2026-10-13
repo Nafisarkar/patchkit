@@ -53,8 +53,8 @@ fn main() -> Result<()> {
     result
 }
 
-/// The event loop. Draws a frame, blocks until a key is pressed, handles that
-/// key, then loops again. Returns when the user quits.
+/// The event loop. Draws a frame, blocks until an event, handles key presses,
+/// then loops again. Returns when the user quits.
 fn run(
     terminal: &mut DefaultTerminal,
     tabmanager: &mut TabManager,
@@ -65,6 +65,8 @@ fn run(
     let mut tweaks_status = tweaks::TweaksStatus::new();
     // Result of the last action, shown in the status bar.
     let mut message = String::new();
+    // A process's elevation never changes after launch, so check it once.
+    let is_admin = sys::is_admin();
 
     loop {
         // draw
@@ -75,6 +77,7 @@ fn run(
                 table_state,
                 &cleaning_status,
                 &tweaks_status,
+                is_admin,
                 &message,
             )
         })?;
@@ -168,6 +171,7 @@ fn draw(
     table_state: &mut TableState,
     cleaning_status: &cleaning::CleaningStatus,
     tweaks_status: &tweaks::TweaksStatus,
+    is_admin: bool,
     message: &str,
 ) {
     // Leave a gutter so content is not flush against the terminal edges.
@@ -177,26 +181,29 @@ fn draw(
     });
 
     // The ASCII banner only fits when the terminal is wide enough for it and
-    // the tagline; otherwise fall back to a one-line text title.
+    // the tagline, and tall enough to leave the rest of the UI a row or two.
+    // Otherwise fall back to a one-line text title carrying everything.
     let banner_width = BANNER
         .lines()
-        .map(|line| line.chars().count())
+        .map(|line| line.trim_end().chars().count())
         .max()
         .unwrap_or(0);
-    let long_tagline = format!("{TAGLINE} · {VERSION}");
-    let show_banner = area.width as usize >= banner_width + long_tagline.chars().count();
+    let banner_height = BANNER.lines().count() as u16;
+    let role = if is_admin { "Administrator" } else { "User" };
+    let wide_tagline = format!("{TAGLINE} · {VERSION}");
+    let narrow_tagline = format!("{wide_tagline} · {role}");
+    let show_banner = area.width as usize >= banner_width + wide_tagline.chars().count()
+        && area.height >= banner_height + 4;
     let tagline = if show_banner {
-        long_tagline
+        wide_tagline
     } else {
-        TAGLINE.to_string()
+        narrow_tagline
     };
     let title_height = if show_banner {
-        BANNER.lines().count() as u16
+        banner_height
     } else {
         1
     };
-
-    let is_admin = sys::is_admin();
 
     // Rows: title, separator, tab bar, the table, the status bar.
     let [
@@ -222,6 +229,8 @@ fn draw(
     .areas(title_area);
 
     // Tagline at the top-right of the title, elevation at the bottom-right.
+    // On narrow terminals the bottom slot has zero height, so everything is
+    // merged into the single tagline line instead.
     let [tagline_top, _fill, tagline_bottom] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -241,7 +250,7 @@ fn draw(
         .alignment(Alignment::Right)
         .style(theme::dim())
         .render(tagline_top, frame.buffer_mut());
-    Paragraph::new(is_admin.then(|| "Administrator ").unwrap_or("User"))
+    Paragraph::new(role)
         .alignment(Alignment::Right)
         .style(theme::dim())
         .render(tagline_bottom, frame.buffer_mut());

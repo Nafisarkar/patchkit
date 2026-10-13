@@ -17,7 +17,7 @@ pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str); 6] = [
+pub const TWEAKS_OPTIONS: [(&str, &str); 8] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -38,5 +38,13 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 6] = [
     (
         "Remove Preinstalled Apps",
         "Uninstall preinstalled store apps (Solitaire, Copilot, Xbox overlays, etc.) for all users",
+    ),
+    (
+        "Edge Debloat",
+        "Disables telemetry, popups and other annoyances in Microsoft Edge",
+    ),
+    (
+        "Start Menu Bing Search",
+        "Toggles Bing web search results in Windows Search",
     ),
 ];

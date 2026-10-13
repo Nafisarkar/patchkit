@@ -19,7 +19,7 @@ use windows::Win32::UI::Shell::{
 
 /// The Windows install directory (`%windir%`), falling back to `C:\Windows`.
 fn windir() -> PathBuf {
-    PathBuf::from(env::var("windir").unwrap_or_else(|_| "C:\\Windows".to_string()))
+    PathBuf::from(env::var_os("windir").unwrap_or_else(|| "C:\\Windows".into()))
 }
 
 /// The current user's `%LOCALAPPDATA%` folder, if it is set.
@@ -28,7 +28,7 @@ fn local_app_data() -> Option<PathBuf> {
 }
 
 /// The per-user Temp folder shown in the UI. Prefer `%LOCALAPPDATA%\Temp` and
-/// fall back to `%TEMP%` when `LOCALAPPDATA` is not set.
+/// fall back to the system temp directory when `LOCALAPPDATA` is not set.
 fn user_temp_dir() -> PathBuf {
     match local_app_data() {
         Some(dir) => dir.join("Temp"),
@@ -38,32 +38,35 @@ fn user_temp_dir() -> PathBuf {
 
 // ---------------------------------------------------------------- recycle bin
 
-/// Total size in bytes and number of items in the Recycle Bin, or `None` if it
-/// could not be queried.
-pub fn query_recycle_bin() -> Option<(u64, u64)> {
+/// Total size in bytes and number of items in the Recycle Bin, or an error
+/// describing why the query failed.
+pub fn query_recycle_bin() -> Result<(u64, u64), String> {
     let mut info = SHQUERYRBINFO {
         cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32,
         i64Size: 0,
         i64NumItems: 0,
     };
-    let hr = unsafe { SHQueryRecycleBinW(None, &mut info) };
-    hr.is_ok()
-        .then_some((info.i64Size as u64, info.i64NumItems as u64))
+    unsafe { SHQueryRecycleBinW(None, &mut info) }
+        .map_err(|e| format!("could not query the recycle bin: {e}"))?;
+    // The API reports i64 values but never negative ones; clamp defensively.
+    Ok((
+        u64::try_from(info.i64Size).unwrap_or(0),
+        u64::try_from(info.i64NumItems).unwrap_or(0),
+    ))
 }
 
 /// Status text for the Recycle Bin row, e.g. "3 · 1.20 MB".
 pub fn preview_recycle_bin() -> Option<String> {
-    let (size, items) = query_recycle_bin()?;
+    let (size, items) = query_recycle_bin().ok()?;
     Some(format!("{items} · {}", sys::format_bytes(size)))
 }
 
 /// Empty the Recycle Bin and describe what was removed.
 pub fn clear_recycle_bin() -> Result<String, String> {
-    let (size, items) = query_recycle_bin().ok_or("could not query the recycle bin")?;
-    if items == 0 {
-        return Ok("already empty".to_string());
-    }
-    // We already confirmed ourselves, so skip the Windows dialog/sound.
+    let (size, items) = query_recycle_bin()?;
+    // Empty even when the query said empty, in case something landed in the
+    // bin since; on an empty bin the call is a harmless no-op. Emptying is
+    // irreversible, so the result text is the user's only confirmation.
     unsafe {
         SHEmptyRecycleBinW(
             None,
@@ -71,7 +74,10 @@ pub fn clear_recycle_bin() -> Result<String, String> {
             SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
         )
     }
-    .map_err(|e| format!("failed: {e}"))?;
+    .map_err(|e| format!("failed to empty the recycle bin: {e}"))?;
+    if items == 0 {
+        return Ok("already empty".to_string());
+    }
     Ok(format!(
         "emptied {items} item(s), {} freed",
         sys::format_bytes(size)
@@ -100,21 +106,33 @@ pub fn preview_user_temp() -> Option<String> {
     preview_dir(&user_temp_dir())
 }
 
-/// Delete the contents of the Windows temp folder.
+/// Delete the contents of a temp folder and summarize the result.
+fn clean_dir(path: &Path) -> Result<String, String> {
+    Ok(sys::clear_dir(path)?.summary())
+}
+
+/// Delete the contents of the Windows temp folder. Unelevated, files owned by
+/// SYSTEM or other accounts are skipped, so mention the admin caveat.
 pub fn clean_windows_temp() -> Result<String, String> {
-    Ok(sys::clear_dir(&windir().join("Temp"))?.summary())
+    let summary = clean_dir(&windir().join("Temp"))?;
+    if sys::is_admin() {
+        Ok(summary)
+    } else {
+        Ok(format!("{summary} — run as administrator for full access"))
+    }
 }
 
 /// Delete the contents of the per-user temp folder.
 pub fn clean_user_temp() -> Result<String, String> {
-    Ok(sys::clear_dir(&user_temp_dir())?.summary())
+    clean_dir(&user_temp_dir())
 }
 
 // --------------------------------------------------------------------- tools
 
-/// Launch the Windows Disk Cleanup tool (`cleanmgr`) for the C: drive.
+/// Launch the Windows Disk Cleanup tool (`cleanmgr`) for the system drive.
 pub fn run_disk_cleanup() -> Result<String, String> {
-    sys::spawn("cleanmgr.exe", &["/d", "C:"])?;
+    let drive = env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+    sys::spawn("cleanmgr.exe", &["/d", &drive])?;
     Ok("disk cleanup launched".to_string())
 }
 
