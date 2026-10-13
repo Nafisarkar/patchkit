@@ -24,9 +24,17 @@ use crate::tools::{cleaning, tweaks};
 /// Key hints shown at the bottom-right of the window.
 const KEY_HINTS: &str = "↑↓ move   ⏎ run   ←→ tabs   q quit";
 /// Short tagline shown at the top-right.
-const TAGLINE: &str = "cleanup & tweaks";
+const TAGLINE: &str = "cleanup & tweaks toolbox";
 /// App version, taken from Cargo.toml at compile time.
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+/// ASCII art banner shown in the title bar on wide-enough terminals.
+const BANNER: &str = "\
+██████╗  █████╗ ████████╗ ██████╗██╗  ██╗██╗  ██╗██╗████████╗
+██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██║  ██║██║ ██╔╝██║╚══██╔══╝
+██████╔╝███████║   ██║   ██║     ███████║█████╔╝ ██║   ██║   
+██╔═══╝ ██╔══██║   ██║   ██║     ██╔══██║██╔═██╗ ██║   ██║   
+██║     ██║  ██║   ██║   ╚██████╗██║  ██║██║  ██╗██║   ██║   
+╚═╝     ╚═╝  ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝";
 
 /// Entry point: register the tabs, start the terminal, run the app, then make
 /// sure the terminal is restored even if the app exits early.
@@ -168,6 +176,26 @@ fn draw(
         vertical: 1,
     });
 
+    // The ASCII banner only fits when the terminal is wide enough for it and
+    // the tagline; otherwise fall back to a one-line text title.
+    let banner_width = BANNER
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0);
+    let long_tagline = format!("{TAGLINE} · {VERSION}");
+    let show_banner = area.width as usize >= banner_width + long_tagline.chars().count();
+    let tagline = if show_banner {
+        long_tagline
+    } else {
+        TAGLINE.to_string()
+    };
+    let title_height = if show_banner {
+        BANNER.lines().count() as u16
+    } else {
+        1
+    };
+
     // Rows: title, separator, tab bar, a spacer, the table, the status bar.
     let [
         title_area,
@@ -177,7 +205,7 @@ fn draw(
         body_area,
         status_area,
     ] = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(title_height),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -186,16 +214,21 @@ fn draw(
     ])
     .areas(area);
 
-    // Title bar: the app name on the left, a tagline on the right.
+    // Title bar: the banner on the left, a tagline on the right.
     let [name_area, tagline_area] = Layout::horizontal([
         Constraint::Min(0),
-        Constraint::Length(TAGLINE.chars().count() as u16),
+        Constraint::Length(tagline.chars().count() as u16),
     ])
     .areas(title_area);
-    Paragraph::new(format!("PatchKit {VERSION}"))
+    let title = if show_banner {
+        BANNER.to_string()
+    } else {
+        format!("PatchKit {VERSION}")
+    };
+    Paragraph::new(title)
         .style(theme::title())
         .render(name_area, frame.buffer_mut());
-    Paragraph::new(TAGLINE)
+    Paragraph::new(tagline)
         .alignment(Alignment::Right)
         .style(theme::dim())
         .render(tagline_area, frame.buffer_mut());
