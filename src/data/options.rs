@@ -401,6 +401,11 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
                 "Reduces eye strain by adjusting screen gamma",
                 "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
             ),
+            StoreApp::new(
+                "Obsidian",
+                "Markdown notes and knowledge base",
+                "https://github.com/obsidianmd/obsidian-releases/releases/latest/download/Obsidian-*.exe",
+            ),
         ],
     },
     StoreCategory {
