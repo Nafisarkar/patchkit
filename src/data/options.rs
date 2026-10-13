@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 26] = [
+pub static STORE_OPTIONS: [StoreApp; 27] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -262,6 +262,11 @@ pub static STORE_OPTIONS: [StoreApp; 26] = [
         "Git",
         "Git for Windows",
         "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
+    ),
+    StoreApp::new(
+        "GitHub CLI",
+        "GitHub's official command-line tool (gh)",
+        "https://github.com/cli/cli/releases/latest/download/gh_*_windows_amd64.msi",
     ),
     StoreApp::new(
         "Node",
