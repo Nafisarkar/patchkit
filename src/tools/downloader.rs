@@ -3,8 +3,9 @@
 //! Each Store row is a name and a link (see
 //! [`crate::data::options::STORE_OPTIONS`]). The file lands in
 //! `%LOCALAPPDATA%\PatchKit\<name>`, then an archive is unpacked there and an
-//! installer is run. A link may also be a GitHub `releases/latest/download`
-//! URL containing a `*` glob, resolved to the newest matching asset.
+//! installer is run. A link may also contain a `*` glob: a GitHub
+//! `releases/latest/download` link resolves against the release API, any other
+//! link against its directory listing.
 
 use std::path::{Path, PathBuf};
 
@@ -110,48 +111,89 @@ fn run_installer(file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Download `url` into `dir`, keeping the URL's file name.
+/// Download `url` into `dir` and return the saved path. `-O -J` takes the name
+/// from the Content-Disposition header or the URL, which also covers links
+/// that only reveal their name after a redirect (e.g. VSCode's).
 fn download(url: &str, dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    let name = url
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or("the link has no file name")?;
-    let dest = dir.join(name);
-    sys::run(
+    let saved = sys::run(
         "curl.exe",
         &[
             "-L",
             "--silent",
             "--show-error",
             "--fail",
-            "-o",
-            &dest.to_string_lossy(),
+            "-O",
+            "-J",
+            "--output-dir",
+            &dir.to_string_lossy(),
+            "-w",
+            "%{filename_effective}",
             url,
         ],
     )?;
-    Ok(dest)
+    if saved.is_empty() {
+        return Err("the download produced no file".to_string());
+    }
+    Ok(PathBuf::from(saved))
 }
 
-/// Resolve a link to a file URL. A GitHub `releases/latest/download/<name>`
-/// link containing a `*` glob becomes the newest matching asset; other links
-/// are returned unchanged.
+/// Resolve a link to a file URL. A `*` link picks the newest file whose name
+/// matches: a GitHub `releases/latest/download` link uses the release API, any
+/// other link is matched against its directory listing.
 fn resolve_link(link: &str) -> Result<String, String> {
     if !link.contains('*') {
         return Ok(link.to_string());
     }
-    let (repo, pattern) = link
+    let (base, pattern) = link
+        .rsplit_once('/')
+        .ok_or("a '*' link needs a file name")?;
+    if let Some(repo) = base
         .strip_prefix("https://github.com/")
-        .and_then(|rest| rest.split_once("/releases/latest/download/"))
-        .ok_or("a '*' link must be a GitHub releases/latest/download URL")?;
-    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let json = sys::run(
+        .and_then(|rest| rest.strip_suffix("/releases/latest/download"))
+    {
+        let json = curl(&format!(
+            "https://api.github.com/repos/{repo}/releases/latest"
+        ))?;
+        return asset_url_in(&json, pattern)
+            .ok_or_else(|| format!("no asset matched '{pattern}' in {repo}"));
+    }
+    let listing = curl(&format!("{base}/"))?;
+    let href = href_matching(&listing, pattern)
+        .ok_or_else(|| format!("no file matched '{pattern}' at {base}"))?;
+    Ok(if href.starts_with("http") {
+        href.to_string()
+    } else if href.starts_with('/') {
+        format!("{}{href}", origin(base))
+    } else {
+        format!("{base}/{href}")
+    })
+}
+
+/// Scheme and host of a URL, e.g. `https://nodejs.org`.
+fn origin(url: &str) -> &str {
+    let start = url.find("://").map_or(0, |i| i + 3);
+    match url[start..].find('/') {
+        Some(i) => &url[..start + i],
+        None => url,
+    }
+}
+
+/// Curl's text output for a URL.
+fn curl(url: &str) -> Result<String, String> {
+    sys::run(
         "curl.exe",
-        &["-L", "--silent", "--show-error", "--fail", &api],
-    )?;
-    asset_url_in(&json, pattern)
-        .ok_or_else(|| format!("no file matched '{pattern}' in the newest {repo} release"))
+        &["-L", "--silent", "--show-error", "--fail", url],
+    )
+}
+
+/// First `href="..."` link in an HTML listing whose file name matches `pattern`.
+fn href_matching<'a>(listing: &'a str, pattern: &str) -> Option<&'a str> {
+    listing
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .find(|href| glob_match(pattern, href.rsplit('/').next().unwrap_or("")))
 }
 
 /// First `browser_download_url` in a release JSON whose file name matches the
@@ -254,5 +296,15 @@ mod tests {
         assert!(is_archive("app.7z") && is_archive("app.ZIP") && is_archive("a.tar.gz"));
         assert!(is_installer("setup.exe") && is_installer("setup.msi"));
         assert!(!is_archive("readme.txt") && !is_installer("readme.txt"));
+    }
+
+    #[test]
+    fn href_matching_reads_a_directory_listing() {
+        let listing = r#"<a href="node-v26.11.1-x64.msi">x</a> <a href="../">up</a>"#;
+        assert_eq!(
+            href_matching(listing, "node-v*-x64.msi"),
+            Some("node-v26.11.1-x64.msi")
+        );
+        assert_eq!(href_matching(listing, "node-v*-x64.zip"), None);
     }
 }

@@ -219,10 +219,50 @@ pub struct StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 2] = [
+pub static STORE_OPTIONS: [StoreApp; 10] = [
+    StoreApp {
+        name: "VSCode",
+        description: "Visual Studio Code — Microsoft's code editor",
+        link: "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
+    },
+    StoreApp {
+        name: "Zed",
+        description: "Fast, multiplayer code editor",
+        link: "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
+    },
+    StoreApp {
+        name: "Git",
+        description: "Git for Windows",
+        link: "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
+    },
+    StoreApp {
+        name: "Node",
+        description: "Node.js JavaScript runtime",
+        link: "https://nodejs.org/dist/latest/node-v*-x64.msi",
+    },
+    StoreApp {
+        name: "Bun",
+        description: "Bun JavaScript runtime and toolkit",
+        link: "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
+    },
+    StoreApp {
+        name: "uv",
+        description: "uv — a fast Python package manager",
+        link: "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
+    },
+    StoreApp {
+        name: "Chrome",
+        description: "Google Chrome browser",
+        link: "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
+    },
+    StoreApp {
+        name: "Helium",
+        description: "Helium — private, fast web browser",
+        link: "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
+    },
     StoreApp {
         name: "mpv",
-        description: "Media player — installs the latest Windows build",
+        description: "Media player",
         link: "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
     },
     StoreApp {
