@@ -37,26 +37,8 @@ const SPACING: u16 = 2;
 /// a subtle background on the selected row.
 pub fn action_table(frame: &mut Frame, area: Rect, state: &mut TableState, rows: Vec<Row<'_>>) {
     // Split into: column titles, a separator line, then the selectable rows.
-    let [header_area, rule_area, list_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .areas(area);
-
-    // A header-only table, so the titles line up with the rows below. It uses
-    // an empty row iterator and therefore draws nothing but the header.
-    let header = Table::new(std::iter::empty::<Row>(), WIDTHS)
-        .column_spacing(SPACING)
-        .header(
-            Row::new(vec![
-                "ACTION".to_string(),
-                "DESCRIPTION".to_string(),
-                format!("{:>width$}", "STATUS", width = STATUS_WIDTH),
-            ])
-            .style(theme::heading()),
-        );
-    frame.render_widget(header, header_area);
+    let [rule_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
 
     // Thin rule separating the header from the rows.
     Paragraph::new("─".repeat(rule_area.width as usize))

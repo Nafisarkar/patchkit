@@ -196,17 +196,17 @@ fn draw(
         1
     };
 
-    // Rows: title, separator, tab bar, a spacer, the table, the status bar.
+    let is_admin = sys::is_admin();
+
+    // Rows: title, separator, tab bar, the table, the status bar.
     let [
         title_area,
         rule_area,
         tab_area,
-        _gap,
         body_area,
         status_area,
     ] = Layout::vertical([
         Constraint::Length(title_height),
-        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
@@ -220,6 +220,15 @@ fn draw(
         Constraint::Length(tagline.chars().count() as u16),
     ])
     .areas(title_area);
+
+    // Tagline at the top-right of the title, elevation at the bottom-right.
+    let [tagline_top, _fill, tagline_bottom] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(tagline_area);
+
     let title = if show_banner {
         BANNER.to_string()
     } else {
@@ -231,7 +240,11 @@ fn draw(
     Paragraph::new(tagline)
         .alignment(Alignment::Right)
         .style(theme::dim())
-        .render(tagline_area, frame.buffer_mut());
+        .render(tagline_top, frame.buffer_mut());
+    Paragraph::new(is_admin.then(|| "Administrator ").unwrap_or("User"))
+        .alignment(Alignment::Right)
+        .style(theme::dim())
+        .render(tagline_bottom, frame.buffer_mut());
 
     // Separator bar under the title.
     Paragraph::new("─".repeat(rule_area.width as usize))
@@ -268,7 +281,15 @@ fn draw(
     ])
     .areas(status_area);
 
-    Paragraph::new(message).render(message_area, frame.buffer_mut());
+    // Successes share the muted chrome colour; errors stand out in red.
+    let message_style = if message.starts_with("Error:") {
+        theme::error()
+    } else {
+        theme::dim()
+    };
+    Paragraph::new(message)
+        .style(message_style)
+        .render(message_area, frame.buffer_mut());
     Paragraph::new(KEY_HINTS)
         .alignment(Alignment::Right)
         .style(theme::dim())
