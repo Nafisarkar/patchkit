@@ -17,7 +17,7 @@ pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str); 12] = [
+pub const TWEAKS_OPTIONS: [(&str, &str); 26] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -62,5 +62,61 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 12] = [
     (
         "Remove OneDrive",
         "Uninstalls OneDrive with its own uninstaller and cleans the leftover files",
+    ),
+    (
+        "Activity History",
+        "Stops Windows from publishing or uploading user activities; keeps clipboard history",
+    ),
+    (
+        "Disable BitLocker",
+        "Disables BitLocker encryption on the system drive (decrypts in the background)",
+    ),
+    (
+        "Consumer Features",
+        "Stops promoted app installs and reduces Microsoft Store app suggestions",
+    ),
+    (
+        "Delivery Optimization",
+        "Stops Windows from using your bandwidth to upload updates to other PCs",
+    ),
+    (
+        "Location Tracking",
+        "Denies app location access and switches off the location sensor",
+    ),
+    (
+        "Store Recommendations",
+        "Toggles recommended Microsoft Store apps in Start menu search results",
+    ),
+    (
+        "Device Companion Apps",
+        "Prevents extra software from installing when plugging in devices",
+    ),
+    (
+        "Services to Manual",
+        "Sets unneeded services to manual/disabled and reduces svchost.exe count",
+    ),
+    (
+        "Explorer Home & Gallery",
+        "Hides Home and Gallery in File Explorer and opens This PC by default",
+    ),
+    (
+        "Visual Effects",
+        "Sets visual effects to best performance (no animations, shadows or transparency)",
+    ),
+    (
+        "Background Apps",
+        "Toggles whether Microsoft Store apps may run in the background",
+    ),
+    (
+        "Hyper-V",
+        "Enables the Hyper-V virtualization feature (restart required)",
+    ),
+    (
+        "WSL",
+        "Enables Windows Subsystem for Linux (restart required)",
+    ),
+    (
+        "O&O ShutUp10++",
+        "Downloads and launches the O&O ShutUp10++ privacy tool",
     ),
 ];
