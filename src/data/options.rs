@@ -305,6 +305,11 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
                 "AI coding agent (CLI)",
                 "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
             ),
+            StoreApp::new(
+                "Pi",
+                "Terminal coding-agent harness",
+                "https://github.com/earendil-works/pi/releases/latest/download/pi-windows-x64.zip",
+            ),
         ],
     },
     StoreCategory {
