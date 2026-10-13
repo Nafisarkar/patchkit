@@ -25,7 +25,7 @@ pub fn install(app: &StoreApp) -> Result<String, String> {
         extract(&file, &dir)?;
         Ok(format!("installed {} ({name})", app.name))
     } else if is_installer(&name) {
-        run_installer(&file)?;
+        run_installer(&file, app.args)?;
         Ok(format!("installed {} ({name})", app.name))
     } else {
         Ok(format!("downloaded {name}"))
@@ -109,14 +109,16 @@ fn seven_zip() -> Result<String, String> {
 }
 
 /// Run an installer: `.msi` through `msiexec` (passive, so it can raise the
-/// elevation prompt), `.exe` with the NSIS `/S` flag. Codes for "installed" and
-/// "already installed" all count as success.
-fn run_installer(file: &Path) -> Result<(), String> {
+/// elevation prompt), `.exe` with the app's `args` or the NSIS `/S` fallback.
+/// Codes for "installed" and "already installed" all count as success.
+fn run_installer(file: &Path, extra_args: &[&str]) -> Result<(), String> {
     let path = file.to_string_lossy().to_string();
     let code = if path.to_ascii_lowercase().ends_with(".msi") {
         sys::exit_code("msiexec.exe", &["/i", &path, "/passive", "/norestart"])?
-    } else {
+    } else if extra_args.is_empty() {
         sys::exit_code(&path, &["/S"])?
+    } else {
+        sys::exit_code(&path, extra_args)?
     };
     // 0 = installed, 3010 = installed (reboot needed), 1638 = already installed.
     if matches!(code, 0 | 3010 | 1638) {

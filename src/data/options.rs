@@ -203,11 +203,10 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
 
 /// A downloadable app on the Store tab: a name, a description and a link.
 ///
-/// The link is either a direct file URL, or a GitHub
-/// `releases/latest/download/<name>` URL whose file name contains a `*` glob,
-/// in which case the newest matching release asset is fetched instead. The
-/// install method is chosen from the downloaded file's extension: archives are
-/// unpacked, installers are run.
+/// The link is either a direct file URL, or a GitHub/HTTP link whose file name
+/// contains a `*` glob (resolved to the newest match). The install method comes
+/// from the downloaded file's extension. Build one with [`StoreApp::new`], or
+/// [`StoreApp::with_args`] when the installer needs arguments.
 pub struct StoreApp {
     /// Row label, also used as the install folder name.
     pub name: &'static str,
@@ -215,59 +214,164 @@ pub struct StoreApp {
     pub description: &'static str,
     /// Download link (see the type docs for the `*` glob form).
     pub link: &'static str,
+    /// Arguments for the installer (empty uses the default silent flag).
+    pub args: &'static [&'static str],
+}
+
+impl StoreApp {
+    /// An app whose installer runs with the default silent arguments.
+    pub const fn new(name: &'static str, description: &'static str, link: &'static str) -> Self {
+        Self {
+            name,
+            description,
+            link,
+            args: &[],
+        }
+    }
+
+    /// An app whose installer needs specific arguments (e.g. `&["-y"]`).
+    pub const fn with_args(
+        name: &'static str,
+        description: &'static str,
+        link: &'static str,
+        args: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            description,
+            link,
+            args,
+        }
+    }
 }
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 10] = [
-    StoreApp {
-        name: "VSCode",
-        description: "Visual Studio Code — Microsoft's code editor",
-        link: "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
-    },
-    StoreApp {
-        name: "Zed",
-        description: "Fast, multiplayer code editor",
-        link: "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
-    },
-    StoreApp {
-        name: "Git",
-        description: "Git for Windows",
-        link: "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
-    },
-    StoreApp {
-        name: "Node",
-        description: "Node.js JavaScript runtime",
-        link: "https://nodejs.org/dist/latest/node-v*-x64.msi",
-    },
-    StoreApp {
-        name: "Bun",
-        description: "Bun JavaScript runtime and toolkit",
-        link: "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
-    },
-    StoreApp {
-        name: "uv",
-        description: "uv — a fast Python package manager",
-        link: "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
-    },
-    StoreApp {
-        name: "Chrome",
-        description: "Google Chrome browser",
-        link: "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
-    },
-    StoreApp {
-        name: "Helium",
-        description: "Helium — private, fast web browser",
-        link: "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
-    },
-    StoreApp {
-        name: "mpv",
-        description: "Media player",
-        link: "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
-    },
-    StoreApp {
-        name: "Dorion",
-        description: "Lightweight Discord client",
-        link: "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
-    },
+pub static STORE_OPTIONS: [StoreApp; 25] = [
+    StoreApp::new(
+        "VSCode",
+        "Visual Studio Code — Microsoft's code editor",
+        "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
+    ),
+    StoreApp::new(
+        "Zed",
+        "Fast, multiplayer code editor",
+        "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
+    ),
+    StoreApp::new(
+        "Git",
+        "Git for Windows",
+        "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
+    ),
+    StoreApp::new(
+        "Node",
+        "Node.js JavaScript runtime",
+        "https://nodejs.org/dist/latest/node-v*-x64.msi",
+    ),
+    StoreApp::new(
+        "Bun",
+        "Bun JavaScript runtime and toolkit",
+        "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
+    ),
+    StoreApp::new(
+        "uv",
+        "uv — a fast Python package manager",
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
+    ),
+    StoreApp::with_args(
+        "Rust",
+        "Rust toolchain installer (rustup)",
+        "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
+        &["-y"],
+    ),
+    StoreApp::new(
+        "Chrome",
+        "Google Chrome browser",
+        "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
+    ),
+    StoreApp::new(
+        "Helium",
+        "Helium — private, fast web browser",
+        "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
+    ),
+    StoreApp::new(
+        "mpv",
+        "Media player",
+        "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
+    ),
+    StoreApp::new(
+        "Dorion",
+        "Lightweight Discord client",
+        "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
+    ),
+    StoreApp::new(
+        "LightBulb",
+        "Reduces eye strain by adjusting screen gamma",
+        "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
+    ),
+    StoreApp::new(
+        "PhotoCraft",
+        "Open-source image editor",
+        "https://github.com/storytold/photocraft/releases/latest/download/photocraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "VectorCraft",
+        "Open-source vector illustration",
+        "https://github.com/storytold/vectorcraft/releases/latest/download/vectorcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "FilmCraft",
+        "Open-source video editor",
+        "https://github.com/storytold/filmcraft/releases/latest/download/filmcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "LightCraft",
+        "Open-source photo library and raw developer",
+        "https://github.com/storytold/lightcraft/releases/latest/download/lightcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "PdfCraft",
+        "Open-source PDF workbench",
+        "https://github.com/storytold/pdfcraft/releases/latest/download/pdfcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "EffectCraft",
+        "Open-source motion graphics and VFX",
+        "https://github.com/storytold/effectcraft/releases/latest/download/effectcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "DesignCraft",
+        "Open-source page layout and publishing",
+        "https://github.com/storytold/designcraft/releases/latest/download/designcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "FigCraft",
+        "Open-source interface design tool",
+        "https://github.com/storytold/figcraft/releases/latest/download/figcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "WordCraft",
+        "Open-source word processor",
+        "https://github.com/storytold/wordcraft/releases/latest/download/wordcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "SoundCraft",
+        "Open-source digital audio workstation",
+        "https://github.com/storytold/soundcraft/releases/latest/download/soundcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "DeckCraft",
+        "Open-source presentation app",
+        "https://github.com/storytold/deckcraft/releases/latest/download/deckcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "CADCraft",
+        "Open-source CAD and drafting",
+        "https://github.com/storytold/cadcraft/releases/latest/download/cadcraft-*-windows-x64.msi",
+    ),
+    StoreApp::new(
+        "GridCraft",
+        "Open-source spreadsheets and data analysis",
+        "https://github.com/storytold/gridcraft/releases/latest/download/gridcraft-*-windows-x64.msi",
+    ),
 ];
