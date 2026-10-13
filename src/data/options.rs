@@ -279,8 +279,8 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
     ),
     StoreApp::new(
-        "uv",
-        "uv — a fast Python package manager",
+        "Uv",
+        "Fast Python package manager",
         "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
     ),
     StoreApp::with_args(
@@ -315,7 +315,7 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
     ),
     StoreApp::new(
-        "mpv",
+        "Mpv",
         "Media player",
         "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
     ),
@@ -340,7 +340,7 @@ pub static STORE_OPTIONS: [StoreApp; 36] = [
         "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
     ),
     StoreApp::new(
-        "oxdm",
+        "Oxdm",
         "Download manager",
         "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
     ),
