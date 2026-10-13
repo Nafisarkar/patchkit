@@ -13,6 +13,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Stor
         .map(|(name, description, needs_admin, _)| {
             let value = match *name {
                 "mpv" => status.mpv.as_str(),
+                "Dorion" => status.dorion.as_str(),
                 _ => " ",
             };
 

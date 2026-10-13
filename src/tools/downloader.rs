@@ -17,6 +17,10 @@ use super::label;
 const MPV_RELEASES_API: &str =
     "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest";
 
+/// GitHub API endpoint for the newest Dorion release (a lightweight,
+/// customizable Discord client).
+const DORION_RELEASES_API: &str = "https://api.github.com/repos/SpikeHD/Dorion/releases/latest";
+
 /// The user's Downloads folder (`%USERPROFILE%\Downloads`).
 fn downloads_dir() -> Result<PathBuf, String> {
     let profile =
@@ -35,6 +39,18 @@ fn mpv_downloaded() -> Option<bool> {
     has_download(is_mpv_asset)
 }
 
+/// True for the 64-bit Dorion Windows installer
+/// (`Dorion_<version>_x64-setup.exe`), and not the arm64 installer or the
+/// portable zip/msi.
+fn is_dorion_asset(file: &str) -> bool {
+    file.starts_with("Dorion_") && file.ends_with("_x64-setup.exe")
+}
+
+/// "In Downloads" / "Not downloaded" for the Dorion row.
+fn dorion_downloaded() -> Option<bool> {
+    has_download(is_dorion_asset)
+}
+
 /// Whether the Downloads folder already holds a file matching `want`.
 fn has_download(want: impl Fn(&str) -> bool) -> Option<bool> {
     let entries = std::fs::read_dir(downloads_dir().ok()?).ok()?;
@@ -46,13 +62,24 @@ fn has_download(want: impl Fn(&str) -> bool) -> Option<bool> {
     )
 }
 
+/// Download the newest mpv Windows build into the Downloads folder.
 pub fn download_mpv() -> Result<String, String> {
-    let url = github_asset_url(MPV_RELEASES_API, is_mpv_asset)?;
+    download_latest(MPV_RELEASES_API, is_mpv_asset)
+}
+
+/// Download the newest Dorion Windows installer into the Downloads folder.
+pub fn download_dorion() -> Result<String, String> {
+    download_latest(DORION_RELEASES_API, is_dorion_asset)
+}
+
+/// Resolve the newest release asset matching `want` and save it to Downloads.
+fn download_latest(api: &str, want: impl Fn(&str) -> bool) -> Result<String, String> {
+    let url = github_asset_url(api, want)?;
     let path = download_to_downloads(&url)?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("mpv");
+        .unwrap_or("the file");
     Ok(format!("downloaded {name} to your Downloads folder"))
 }
 
@@ -137,6 +164,8 @@ fn asset_url_in(json: &str, want: impl Fn(&str) -> bool) -> Option<String> {
 pub struct StoreStatus {
     /// Text for the "mpv" row.
     pub mpv: String,
+    /// Text for the "Dorion" row.
+    pub dorion: String,
 }
 
 impl StoreStatus {
@@ -150,6 +179,7 @@ impl StoreStatus {
     /// Re-check which store downloads are already present.
     pub fn refresh(&mut self) {
         self.mpv = label(mpv_downloaded(), "In Downloads", "Not downloaded");
+        self.dorion = label(dorion_downloaded(), "In Downloads", "Not downloaded");
     }
 }
 
@@ -187,5 +217,13 @@ mod tests {
         assert!(!is_mpv_asset("mpv-x86_64-v3-20261013-git-9d144e57b6.7z"));
         assert!(!is_mpv_asset("mpv-dev-x86_64-20261013-git-9d144e57b6.7z"));
         assert!(!is_mpv_asset("mpv-x86_64-20261013-git-9d144e57b6.zip"));
+    }
+
+    #[test]
+    fn is_dorion_asset_picks_the_x64_installer() {
+        assert!(is_dorion_asset("Dorion_6.13.2_x64-setup.exe"));
+        assert!(!is_dorion_asset("Dorion_6.13.2.arm64-setup.exe"));
+        assert!(!is_dorion_asset("Dorion_6.13.2_win64_portable.zip"));
+        assert!(!is_dorion_asset("Dorion_6.13.2_x64_en-US.msi"));
     }
 }

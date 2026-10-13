@@ -198,9 +198,17 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
 ];
 
 /// Rows of the Store tab, in display order.
-pub const STORE_OPTIONS: [(&str, &str, bool, Option<Action>); 1] = [(
-    "mpv",
-    "Media player — downloads the latest Windows build to your Downloads folder",
-    false,
-    Some(downloader::download_mpv),
-)];
+pub const STORE_OPTIONS: [(&str, &str, bool, Option<Action>); 2] = [
+    (
+        "mpv",
+        "Media player — downloads the latest Windows build to your Downloads folder",
+        false,
+        Some(downloader::download_mpv),
+    ),
+    (
+        "Dorion",
+        "Lightweight Discord client — downloads the Windows installer to your Downloads folder",
+        false,
+        Some(downloader::download_dorion),
+    ),
+];
