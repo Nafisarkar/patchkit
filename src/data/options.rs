@@ -247,7 +247,7 @@ impl StoreApp {
 
 /// Rows of the Store tab, in display order. Add a `StoreApp` here to add an
 /// app; nothing else needs wiring up.
-pub static STORE_OPTIONS: [StoreApp; 31] = [
+pub static STORE_OPTIONS: [StoreApp; 32] = [
     StoreApp::new(
         "VSCode",
         "Visual Studio Code — Microsoft's code editor",
@@ -293,6 +293,11 @@ pub static STORE_OPTIONS: [StoreApp; 31] = [
         "Chrome",
         "Google Chrome browser",
         "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
+    ),
+    StoreApp::new(
+        "Brave",
+        "Privacy-focused web browser",
+        "https://github.com/brave/brave-browser/releases/latest/download/BraveBrowserStandaloneSilentSetup.exe",
     ),
     StoreApp::new(
         "Helium",
