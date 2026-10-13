@@ -925,6 +925,14 @@ pub fn dark_mode_enabled() -> Option<bool> {
     Some(reg_dword(PERSONALIZE, "AppsUseLightTheme").unwrap_or(1) == 0)
 }
 
+/// The `*UsesLightTheme` data for the *next* theme state: the flags are
+/// inverted (0 = dark, 1 = light), so toggling away from dark writes 1 and
+/// toggling away from light writes 0. Kept pure so a unit test can pin the
+/// polarity — writing back the value that was just read is a silent no-op.
+fn flipped_uses_light(now_dark: bool) -> u32 {
+    u32::from(now_dark)
+}
+
 /// Switch apps and the system between light and dark theme. Each of the two
 /// theme values flips independently, so a split setup stays split instead of
 /// being forced to match.
@@ -933,11 +941,11 @@ pub fn toggle_dark_mode() -> Result<String, String> {
     let now_dark_system = reg_dword(PERSONALIZE, "SystemUsesLightTheme")
         .map(|value| value == 0)
         .unwrap_or(now_dark);
-    set_dword(PERSONALIZE, "AppsUseLightTheme", u32::from(!now_dark))?;
+    set_dword(PERSONALIZE, "AppsUseLightTheme", flipped_uses_light(now_dark))?;
     set_dword(
         PERSONALIZE,
         "SystemUsesLightTheme",
-        u32::from(!now_dark_system),
+        flipped_uses_light(now_dark_system),
     )?;
     sys::broadcast_setting_change();
     Ok(format!(
@@ -1117,5 +1125,25 @@ fn label(value: Option<bool>, yes: &str, no: &str) -> String {
         Some(true) => yes.to_string(),
         Some(false) => no.to_string(),
         None => "unknown".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dark_mode_toggle_writes_the_opposite_theme() {
+        // 0 = dark, 1 = light: leaving the dark theme must write 1, and
+        // leaving the light theme must write 0.
+        assert_eq!(flipped_uses_light(true), 1);
+        assert_eq!(flipped_uses_light(false), 0);
+    }
+
+    #[test]
+    fn status_labels_map_option_bool() {
+        assert_eq!(label(Some(true), "Dark", "Light"), "Dark");
+        assert_eq!(label(Some(false), "Dark", "Light"), "Light");
+        assert_eq!(label(None, "Dark", "Light"), "unknown");
     }
 }
