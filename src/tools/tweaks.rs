@@ -8,6 +8,7 @@
 //! functions change the system.
 
 use crate::sys;
+use std::path::Path;
 
 // ------------------------------------------------------------------ registry
 
@@ -260,6 +261,188 @@ pub fn toggle_bing_search() -> Result<String, String> {
     ))
 }
 
+// ------------------------------------------------------- classic right-click menu
+
+/// `HKCU\...\CLSID\{86ca1aa0-…}` — creating this key with an empty
+/// `InprocServer32` default value makes File Explorer show the full
+/// Windows 10-style right-click menu instead of the simplified Windows 11 one.
+const CLASSIC_CONTEXT_MENU: &str =
+    r"HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
+
+/// True when File Explorer uses the classic full right-click menu. The
+/// override key only exists once the classic menu was enabled.
+pub fn classic_context_menu_enabled() -> Option<bool> {
+    Some(
+        sys::run(
+            "reg",
+            &["query", &format!("{CLASSIC_CONTEXT_MENU}\\InprocServer32")],
+        )
+        .is_ok(),
+    )
+}
+
+/// Toggle between the classic (Windows 10) full right-click menu and the
+/// simplified Windows 11 menu (restarts Explorer to apply it).
+pub fn toggle_classic_context_menu() -> Result<String, String> {
+    if classic_context_menu_enabled().unwrap_or(false) {
+        sys::run("reg", &["delete", CLASSIC_CONTEXT_MENU, "/f"])?;
+        sys::restart_explorer()?;
+        Ok("restored the Windows 11 right-click menu".to_string())
+    } else {
+        // The empty default value on InprocServer32 is the entire trick.
+        sys::run(
+            "reg",
+            &[
+                "add",
+                &format!("{CLASSIC_CONTEXT_MENU}\\InprocServer32"),
+                "/ve",
+                "/d",
+                "",
+                "/f",
+            ],
+        )?;
+        sys::restart_explorer()?;
+        Ok("restored the classic right-click menu".to_string())
+    }
+}
+
+// ----------------------------------------------------------------- windows ai
+
+/// `HKLM\...\Policies\Explorer` — hides settings pages such as the AI ones.
+const EXPLORER_POLICIES: &str =
+    r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+/// `HKLM\SOFTWARE\Policies\WindowsNotepad` — Notepad AI features policy.
+const WINDOWS_NOTEPAD: &str = r"HKLM\SOFTWARE\Policies\WindowsNotepad";
+
+/// True when the Windows AI features were disabled and removed.
+pub fn windows_ai_disabled() -> Option<bool> {
+    Some(reg_dword(WINDOWS_NOTEPAD, "DisableAIFeatures").unwrap_or(0) == 1)
+}
+
+/// Disable and remove Windows AI: Recall, Copilot, Notepad AI features and the
+/// CoreAI package. Requires administrator rights, and may take a while.
+pub fn disable_windows_ai() -> Result<String, String> {
+    require_admin()?;
+    set_reg(
+        EXPLORER_POLICIES,
+        "SettingsPageVisibility",
+        "REG_SZ",
+        "hide:aicomponents",
+    )?;
+    set_dword(WINDOWS_NOTEPAD, "DisableAIFeatures", 1)?;
+
+    // Errors inside the script are silenced so one absent component (no
+    // Recall, no winget, …) does not abort the rest.
+    let script = "\
+$Appx = (Get-AppxPackage MicrosoftWindows.Client.CoreAI).PackageFullName
+$Sid = (Get-LocalUser $Env:UserName).Sid.Value
+
+if ($Appx -and $Sid) {
+    New-Item \"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\EndOfLife\\$Sid\\$Appx\" -Force -ErrorAction SilentlyContinue | Out-Null
+}
+
+Get-AppxPackage -AllUsers '*Copilot*' | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+winget uninstall -e --name 'Copilot' --silent --force --accept-source-agreements 2>$null
+Get-AppxPackage -AllUsers Microsoft.MicrosoftOfficeHub | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+
+if ($Appx) {
+    Remove-AppxPackage $Appx -ErrorAction SilentlyContinue
+}
+
+Set-Service -Name WSAIFabricSvc -StartupType Disabled -ErrorAction SilentlyContinue
+Disable-WindowsOptionalFeature -FeatureName Recall -Online -NoRestart -ErrorAction SilentlyContinue | Out-Null";
+    sys::powershell(script)?;
+    Ok("Windows AI disabled and removed (restart to finish)".to_string())
+}
+
+// ----------------------------------------------------------- reserved storage
+
+/// True when Windows keeps its ~7 GB of reserved storage for updates. Windows
+/// enables it by default. Detection parses `DISM /Get-ReservedStorageState`
+/// output, so non-English systems report "unknown".
+pub fn reserved_storage_enabled() -> Option<bool> {
+    let out = sys::run("DISM", &["/Online", "/Get-ReservedStorageState"]).ok()?;
+    // The state line reads "Reserved Storage State : Disabled" (English DISM).
+    if out.contains("Disabled") {
+        Some(false)
+    } else if out.contains("Enabled") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Toggle Windows Reserved Storage (requires administrator rights). Freeing
+/// it helps small drives; re-enable it before major feature updates.
+pub fn toggle_reserved_storage() -> Result<String, String> {
+    require_admin()?;
+    if reserved_storage_enabled().unwrap_or(true) {
+        sys::run("DISM", &["/Online", "/Set-ReservedStorageState", "/State:Disabled"])?;
+        Ok("reserved storage disabled".to_string())
+    } else {
+        sys::run("DISM", &["/Online", "/Set-ReservedStorageState", "/State:Enabled"])?;
+        Ok("reserved storage enabled".to_string())
+    }
+}
+
+// -------------------------------------------------------------- remove onedrive
+
+/// True when OneDrive is still installed: either the system-wide or the
+/// per-user setup files are present.
+pub fn onedrive_installed() -> Option<bool> {
+    let system_root = std::env::var_os("SystemRoot")?;
+    let local_app_data = std::env::var_os("LocalAppData")?;
+    Some(
+        Path::new(&system_root)
+            .join("System32\\OneDriveSetup.exe")
+            .exists()
+            || Path::new(&local_app_data)
+                .join("Microsoft\\OneDrive")
+                .exists(),
+    )
+}
+
+/// Remove Microsoft OneDrive with its own uninstaller, clean the leftovers,
+/// and disable the OneSyncSvc sync service. Restarting Explorer afterwards
+/// releases its handles on OneDrive files. Requires administrator rights.
+pub fn remove_onedrive() -> Result<String, String> {
+    require_admin()?;
+    let script = "\
+$OneDriveDir = $Env:OneDrive
+if ($OneDriveDir -and (Test-Path $OneDriveDir)) {
+    # Deny the Administrators group delete rights so the uninstaller cannot
+    # take the user's files with it; grant them back afterwards.
+    icacls $OneDriveDir /deny '*S-1-5-32-544:(D,DC)' | Out-Null
+}
+
+$setup = Join-Path $Env:SystemRoot 'System32\\OneDriveSetup.exe'
+if (-not (Test-Path $setup)) {
+    $setup = Join-Path $Env:LOCALAPPDATA 'Microsoft\\OneDrive\\OneDriveSetup.exe'
+}
+if (Test-Path $setup) {
+    Start-Process -FilePath $setup -ArgumentList '/uninstall' -Wait
+}
+
+Stop-Process -Name FileCoAuth -ErrorAction SilentlyContinue
+Remove-Item \"$Env:LOCALAPPDATA\\Microsoft\\OneDrive\" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item \"$Env:ProgramData\\Microsoft OneDrive\" -Recurse -Force -ErrorAction SilentlyContinue
+
+if ($OneDriveDir -and (Test-Path $OneDriveDir)) {
+    icacls $OneDriveDir /grant '*S-1-5-32-544:(D,DC)' | Out-Null
+    # Only delete the folder when the user's files are all gone.
+    if (-not (Get-ChildItem -Path $OneDriveDir)) {
+        Remove-Item -Path $OneDriveDir -Recurse -Force
+        [Environment]::SetEnvironmentVariable('OneDrive', $null, 'User')
+    }
+}
+
+Get-Service -Name 'OneSyncSvc*' -ErrorAction SilentlyContinue |
+    Set-Service -StartupType Disabled -ErrorAction SilentlyContinue";
+    sys::powershell(script)?;
+    sys::restart_explorer()?;
+    Ok("OneDrive removed (Explorer restarted)".to_string())
+}
+
 // ----------------------------------------------------------------- dark mode
 
 /// True when apps use the dark theme.
@@ -368,6 +551,14 @@ pub struct TweaksStatus {
     pub edge: String,
     /// Text for the "Start Menu Bing Search" row.
     pub bing_search: String,
+    /// Text for the "Classic Right-Click Menu" row.
+    pub right_click_menu: String,
+    /// Text for the "Windows AI" row.
+    pub windows_ai: String,
+    /// Text for the "Reserved Storage" row.
+    pub reserved_storage: String,
+    /// Text for the "Remove OneDrive" row.
+    pub one_drive: String,
 }
 
 impl TweaksStatus {
@@ -387,6 +578,10 @@ impl TweaksStatus {
         self.wallpaper = label(wallpaper_compression_enabled(), "Compressed", "Full quality");
         self.edge = label(edge_debloat_enabled(), "Applied", "Default");
         self.bing_search = label(bing_search_enabled(), "On", "Off");
+        self.right_click_menu = label(classic_context_menu_enabled(), "Classic", "Windows 11");
+        self.windows_ai = label(windows_ai_disabled(), "Disabled", "Enabled");
+        self.reserved_storage = label(reserved_storage_enabled(), "On", "Off");
+        self.one_drive = label(onedrive_installed(), "Installed", "Removed");
     }
 
     /// Refresh the activation status. Slow (spawns PowerShell/WMI), so it is

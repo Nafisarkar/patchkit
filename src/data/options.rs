@@ -17,7 +17,7 @@ pub const CLEANING_OPTIONS: [(&str, &str); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str); 8] = [
+pub const TWEAKS_OPTIONS: [(&str, &str); 12] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -46,5 +46,21 @@ pub const TWEAKS_OPTIONS: [(&str, &str); 8] = [
     (
         "Start Menu Bing Search",
         "Toggles Bing web search results in Windows Search",
+    ),
+    (
+        "Classic Right-Click Menu",
+        "Restores the Windows 10 full context menu in File Explorer instead of the Windows 11 one",
+    ),
+    (
+        "Windows AI",
+        "Removes and disables all AI features/packages (Recall, Copilot, Notepad AI)",
+    ),
+    (
+        "Reserved Storage",
+        "Toggles the ~7 GB Windows reserves for updates; freeing it helps small drives",
+    ),
+    (
+        "Remove OneDrive",
+        "Uninstalls OneDrive with its own uninstaller and cleans the leftover files",
     ),
 ];

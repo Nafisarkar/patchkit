@@ -25,6 +25,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
                 "Wallpaper compression" => status.wallpaper.as_str(),
                 "Edge Debloat" => status.edge.as_str(),
                 "Start Menu Bing Search" => status.bing_search.as_str(),
+                "Classic Right-Click Menu" => status.right_click_menu.as_str(),
+                "Windows AI" => status.windows_ai.as_str(),
+                "Reserved Storage" => status.reserved_storage.as_str(),
+                "Remove OneDrive" => status.one_drive.as_str(),
                 "Remove Preinstalled Apps" => "—",
                 _ => " ",
             };
@@ -56,6 +60,10 @@ pub fn activate(index: usize, status: &mut TweaksStatus) -> Result<String, Strin
         5 => tweaks::remove_preinstalled_apps(),
         6 => tweaks::edge_debloat(),
         7 => tweaks::toggle_bing_search(),
+        8 => tweaks::toggle_classic_context_menu(),
+        9 => tweaks::disable_windows_ai(),
+        10 => tweaks::toggle_reserved_storage(),
+        11 => tweaks::remove_onedrive(),
         _ => return Ok(String::new()),
     };
 
