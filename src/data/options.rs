@@ -207,6 +207,15 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
 /// contains a `*` glob (resolved to the newest match). The install method comes
 /// from the downloaded file's extension. Build one with [`StoreApp::new`], or
 /// [`StoreApp::with_args`] when the installer needs arguments.
+/// An install script to run instead of downloading a file.
+pub enum StoreScript {
+    /// Launch `program` with `args`.
+    Command(&'static str, &'static [&'static str]),
+    /// Install `package` globally: with bun when bun is on PATH, npm
+    /// otherwise; an error surfaces when neither is installed.
+    GlobalPackage(&'static str),
+}
+
 pub struct StoreApp {
     /// Row label, also used as the install folder name.
     pub name: &'static str,
@@ -216,16 +225,30 @@ pub struct StoreApp {
     pub link: &'static str,
     /// Arguments for the installer (empty uses the default silent flag).
     pub args: &'static [&'static str],
+    /// An install script to run instead of downloading a file.
+    pub script: Option<StoreScript>,
+    /// Install marker used by the status column: an executable or install
+    /// folder (relative to Program Files, the user profile, the local app
+    /// data, or the app's own download folder) that only exists once the app
+    /// is installed. Script apps are detected via PATH instead.
+    pub exe: &'static str,
 }
 
 impl StoreApp {
     /// An app whose installer runs with the default silent arguments.
-    pub const fn new(name: &'static str, description: &'static str, link: &'static str) -> Self {
+    pub const fn new(
+        name: &'static str,
+        description: &'static str,
+        exe: &'static str,
+        link: &'static str,
+    ) -> Self {
         Self {
             name,
             description,
             link,
             args: &[],
+            script: None,
+            exe,
         }
     }
 
@@ -233,6 +256,7 @@ impl StoreApp {
     pub const fn with_args(
         name: &'static str,
         description: &'static str,
+        exe: &'static str,
         link: &'static str,
         args: &'static [&'static str],
     ) -> Self {
@@ -241,6 +265,46 @@ impl StoreApp {
             description,
             link,
             args,
+            script: None,
+            exe,
+        }
+    }
+
+    /// An app installed by running a script instead of downloading a file:
+    /// `program` is launched with `args` and nothing is downloaded. Its
+    /// installed status is whether `exe` responds to `--version`.
+    pub const fn from_script(
+        name: &'static str,
+        description: &'static str,
+        exe: &'static str,
+        program: &'static str,
+        args: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            description,
+            link: "",
+            args: &[],
+            script: Some(StoreScript::Command(program, args)),
+            exe,
+        }
+    }
+
+    /// An npm-style global package, installed with bun when bun is found on
+    /// PATH, npm otherwise.
+    pub const fn from_package(
+        name: &'static str,
+        description: &'static str,
+        exe: &'static str,
+        package: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            link: "",
+            args: &[],
+            script: Some(StoreScript::GlobalPackage(package)),
+            exe,
         }
     }
 }
@@ -255,60 +319,107 @@ pub struct StoreCategory {
 
 /// The Store apps, grouped by category in display order. Add a `StoreApp` to a
 /// category to add an app; nothing else needs wiring up.
-pub static STORE_CATEGORIES: [StoreCategory; 7] = [
+pub static STORE_CATEGORIES: [StoreCategory; 8] = [
     StoreCategory {
         title: "Editors & dev tools",
         apps: &[
             StoreApp::new(
                 "VSCode",
                 "Visual Studio Code — Microsoft's code editor",
+                "Microsoft VS Code/Code.exe",
                 "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
             ),
             StoreApp::new(
                 "Zed",
                 "Fast, multiplayer code editor",
+                "Zed/Zed.exe",
                 "https://github.com/zed-industries/zed/releases/latest/download/Zed-x86_64.exe",
             ),
             StoreApp::new(
                 "Git",
                 "Git for Windows",
+                "Git/cmd/git.exe",
                 "https://github.com/git-for-windows/git/releases/latest/download/Git-*-64-bit.exe",
             ),
-            StoreApp::new(
+            StoreApp::from_script(
                 "GitHub CLI",
                 "GitHub's official command-line tool (gh)",
-                "https://github.com/cli/cli/releases/latest/download/gh_*_windows_amd64.msi",
+                "gh.exe",
+                "winget",
+                &["install", "--id", "GitHub.cli"],
             ),
             StoreApp::new(
                 "Node",
                 "Node.js JavaScript runtime",
+                "nodejs/node.exe",
                 "https://nodejs.org/dist/latest/node-v*-x64.msi",
             ),
-            StoreApp::new(
+            StoreApp::from_script(
                 "Bun",
                 "Bun JavaScript runtime and toolkit",
-                "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip",
+                "bun.exe",
+                "powershell",
+                &["-c", "irm bun.sh/install.ps1|iex"],
             ),
-            StoreApp::new(
+            StoreApp::from_script(
                 "Uv",
                 "Fast Python package manager",
-                "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
+                "uv.exe",
+                "powershell",
+                &["-ExecutionPolicy", "ByPass", "-c", "irm https://astral.sh/uv/install.ps1 | iex"],
+            ),
+            StoreApp::from_script(
+                "Chocolatey",
+                "Windows package manager",
+                "chocolatey/bin/choco.exe",
+                "powershell",
+                &[
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Scope",
+                    "Process",
+                    "-Force",
+                    "-c",
+                    concat!(
+                        "$ProgressPreference = 'SilentlyContinue'; ",
+                        "[System.Net.ServicePointManager]::SecurityProtocol = ",
+                        "[System.Net.ServicePointManager]::SecurityProtocol -bor 3072; ",
+                        "iex ((New-Object System.Net.WebClient).DownloadString(",
+                        "'https://community.chocolatey.org/install.ps1'))"
+                    ),
+                ],
             ),
             StoreApp::with_args(
                 "Rust",
                 "Rust toolchain installer (rustup)",
+                ".cargo/bin/cargo.exe",
                 "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
                 &["-y"],
             ),
-            StoreApp::new(
+        ],
+    },
+    StoreCategory {
+        title: "AI",
+        apps: &[
+            StoreApp::from_script(
                 "OpenCode",
                 "AI coding agent (CLI)",
-                "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
+                "opencode.exe",
+                "bash",
+                &["-c", "curl -fsSL https://opencode.ai/v2/install | bash"],
             ),
-            StoreApp::new(
+            StoreApp::from_script(
                 "Pi",
                 "Terminal coding-agent harness",
-                "https://github.com/earendil-works/pi/releases/latest/download/pi-windows-x64.zip",
+                "pi.cmd",
+                "powershell",
+                &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://pi.dev/install.ps1 | iex"],
+            ),
+            StoreApp::from_package(
+                "Harness",
+                "command-code CLI, installed on bun or npm",
+                "command-code",
+                "command-code@latest",
             ),
         ],
     },
@@ -318,26 +429,31 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
             StoreApp::new(
                 "Chrome",
                 "Google Chrome browser",
+                "Google/Chrome/Application/chrome.exe",
                 "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
             ),
             StoreApp::new(
                 "Brave",
                 "Privacy-focused web browser",
+                "BraveSoftware/Brave-Browser/Application/brave.exe",
                 "https://github.com/brave/brave-browser/releases/latest/download/BraveBrowserStandaloneSilentSetup.exe",
             ),
             StoreApp::new(
                 "LibreWolf",
                 "Privacy-hardened Firefox fork",
+                "LibreWolf/librewolf.exe",
                 "https://dl.librewolf.net/librewolf/157.0.1-1/librewolf-157.0.1-1-windows-x86_64-setup.exe",
             ),
             StoreApp::new(
                 "Zen",
                 "Calm, Firefox-based browser",
+                "Zen Browser/zen.exe",
                 "https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe",
             ),
             StoreApp::new(
                 "Helium",
                 "Helium — private, fast web browser",
+                "Helium/helium.exe",
                 "https://github.com/imputnet/helium-windows/releases/latest/download/helium_*_x64-installer.exe",
             ),
         ],
@@ -345,19 +461,23 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
     StoreCategory {
         title: "Multimedia",
         apps: &[
-            StoreApp::new(
+            StoreApp::from_script(
                 "Mpv",
                 "Media player",
-                "https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest/download/mpv-x86_64-*.7z",
+                "mpv.exe",
+                "choco",
+                &["install", "mpv", "-y"],
             ),
             StoreApp::new(
                 "VLC",
                 "Open-source media player",
+                "VideoLAN/VLC/vlc.exe",
                 "https://get.videolan.org/vlc/last/win64/vlc-*-win64.exe",
             ),
             StoreApp::new(
                 "OBS Studio",
                 "Screen recording and live streaming",
+                "obs-studio/bin/64bit/obs64.exe",
                 "https://github.com/obsproject/obs-studio/releases/latest/download/OBS-Studio-*-Windows-x64-Installer.exe",
             ),
         ],
@@ -368,17 +488,14 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
             StoreApp::new(
                 "Discord",
                 "Official Discord client",
+                "Discord",
                 "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64",
             ),
             StoreApp::new(
                 "Dorion",
                 "Lightweight Discord client",
+                "Dorion/Dorion.exe",
                 "https://github.com/SpikeHD/Dorion/releases/latest/download/Dorion_*_x64-setup.exe",
-            ),
-            StoreApp::new(
-                "LocalSend",
-                "Share files with nearby devices",
-                "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
             ),
         ],
     },
@@ -386,34 +503,81 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
         title: "Utilities",
         apps: &[
             StoreApp::new(
+                "LocalSend",
+                "Share files with nearby devices",
+                "LocalSend/localsend_app.exe",
+                "https://github.com/localsend/localsend/releases/latest/download/LocalSend-*-windows-x86-64.exe",
+            ),
+            StoreApp::new(
+                "f.lux",
+                "Screen color temperature adjuster",
+                "FluxSoftware\\Flux\\flux.exe",
+                "https://justgetflux.com/flux-setup.exe",
+            ),
+            StoreApp::new(
                 "Oxdm",
                 "Download manager",
+                "oxdm.exe",
                 "https://github.com/jd1378/oxdm/releases/latest/download/oxdm-*-x86_64-pc-windows-msvc.tar.gz",
             ),
             StoreApp::new(
                 "qBittorrent",
                 "Open-source BitTorrent client",
+                "qBittorrent/qbittorrent.exe",
                 "https://github.com/qbittorrent/qBittorrent/releases/latest/download/qbittorrent_*_x64_setup.exe",
             ),
-            StoreApp::new(
+            StoreApp::from_script(
                 "WinRAR",
                 "Archive manager",
-                "https://www.rarlab.com/rar/winrar-x64-723.exe",
+                "WinRAR.exe",
+                "choco",
+                &["install", "winrar", "-y"],
             ),
             StoreApp::with_args(
                 "Bulk Crap Uninstaller",
                 "Bulk uninstaller for Windows",
+                "Bulk Crap Uninstaller/BCUninstaller.exe",
                 "https://github.com/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest/download/BCUninstaller_*_setup.exe",
                 &["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
             ),
             StoreApp::new(
                 "LightBulb",
                 "Reduces eye strain by adjusting screen gamma",
+                "LightBulb/LightBulb.exe",
                 "https://github.com/Tyrrrz/LightBulb/releases/latest/download/LightBulb-Installer.win-x64.exe",
+            ),
+            StoreApp::from_script(
+                "Bitwarden",
+                "Open-source password manager",
+                "Bitwarden/Bitwarden.exe",
+                "choco",
+                &["install", "bitwarden", "-y"],
+            ),
+            StoreApp::from_script(
+                "Windows Terminal",
+                "Modern terminal emulator for Windows",
+                "wt.exe",
+                "choco",
+                &["install", "microsoft-windows-terminal", "-y"],
+            ),
+            StoreApp::from_script(
+                "7-Zip",
+                "File archiver",
+                "7-Zip/7z.exe",
+                "choco",
+                &["install", "7zip.install", "-y"],
+            ),
+            StoreApp::from_script(
+                "Notepad++",
+                "Source code editor and Notepad replacement",
+                "notepad++.exe",
+                "choco",
+                &["install", "notepadplusplus.install", "-y"],
             ),
             StoreApp::new(
                 "Obsidian",
                 "Markdown notes and knowledge base",
+                "Obsidian/Obsidian.exe",
                 "https://github.com/obsidianmd/obsidian-releases/releases/latest/download/Obsidian-*.exe",
             ),
         ],
@@ -423,6 +587,7 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
         apps: &[StoreApp::new(
             "Steam",
             "Game store and launcher",
+                "Steam/steam.exe",
             "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
         )],
     },
@@ -432,66 +597,79 @@ pub static STORE_CATEGORIES: [StoreCategory; 7] = [
             StoreApp::new(
                 "PhotoCraft",
                 "Open-source image editor",
+                "PhotoCraft",
                 "https://github.com/storytold/photocraft/releases/latest/download/photocraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "VectorCraft",
                 "Open-source vector illustration",
+                "VectorCraft",
                 "https://github.com/storytold/vectorcraft/releases/latest/download/vectorcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "FilmCraft",
                 "Open-source video editor",
+                "FilmCraft",
                 "https://github.com/storytold/filmcraft/releases/latest/download/filmcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "LightCraft",
                 "Open-source photo library and raw developer",
+                "LightCraft",
                 "https://github.com/storytold/lightcraft/releases/latest/download/lightcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "PdfCraft",
                 "Open-source PDF workbench",
+                "PdfCraft",
                 "https://github.com/storytold/pdfcraft/releases/latest/download/pdfcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "EffectCraft",
                 "Open-source motion graphics and VFX",
+                "EffectCraft",
                 "https://github.com/storytold/effectcraft/releases/latest/download/effectcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "DesignCraft",
                 "Open-source page layout and publishing",
+                "DesignCraft",
                 "https://github.com/storytold/designcraft/releases/latest/download/designcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "FigCraft",
                 "Open-source interface design tool",
+                "FigCraft",
                 "https://github.com/storytold/figcraft/releases/latest/download/figcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "WordCraft",
                 "Open-source word processor",
+                "WordCraft",
                 "https://github.com/storytold/wordcraft/releases/latest/download/wordcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "SoundCraft",
                 "Open-source digital audio workstation",
+                "SoundCraft",
                 "https://github.com/storytold/soundcraft/releases/latest/download/soundcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "DeckCraft",
                 "Open-source presentation app",
+                "DeckCraft",
                 "https://github.com/storytold/deckcraft/releases/latest/download/deckcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "CADCraft",
                 "Open-source CAD and drafting",
+                "CADCraft",
                 "https://github.com/storytold/cadcraft/releases/latest/download/cadcraft-*-windows-x64.msi",
             ),
             StoreApp::new(
                 "GridCraft",
                 "Open-source spreadsheets and data analysis",
+                "GridCraft",
                 "https://github.com/storytold/gridcraft/releases/latest/download/gridcraft-*-windows-x64.msi",
             ),
         ],

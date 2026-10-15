@@ -1,0 +1,8 @@
+[package]
+name = "gen-assets"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

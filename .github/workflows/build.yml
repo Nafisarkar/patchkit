@@ -11,6 +11,9 @@ on:
 permissions:
   contents: write
 
+env:
+  NSIS_EXE: 'C:\Program Files (x86)\NSIS\makensis.exe'
+
 jobs:
   build:
     # PatchKit is Windows-only (Win32 APIs), so always build on Windows.
@@ -28,11 +31,32 @@ jobs:
       - name: Build (release)
         run: cargo build --release --locked
 
+      # Generate icons/Icon.ico + installer/*.bmp from icons/Icon.png.
+      # The committed artifacts are reused when present.
+      - name: Generate installer assets
+        run: cargo run --locked --manifest-path tools/gen-assets/Cargo.toml --release
+
+      - name: Build installer (NSIS)
+        shell: powershell
+        run: |
+          $nsis = "$env:NSIS_EXE"
+          if (-not (Test-Path $nsis)) {
+            Write-Host 'NSIS not found on runner - installing via choco'
+            choco install nsis -y --no-progress
+            $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          }
+          $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.0.0' }
+          & "$nsis" "/DVERSION=$ver" /V2 installer\patchkit.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Test-Path dist\patchkit-setup.exe || exit 1
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: patchkit
-          path: target/release/patchkit.exe
+          path: |
+            target/release/patchkit.exe
+            dist/patchkit-setup.exe
 
       # Pushing a `v*` tag publishes a versioned release.
       - name: Publish tagged release
@@ -43,7 +67,12 @@ jobs:
           name: PatchKit ${{ github.ref_name }}
           body: |
             PatchKit ${{ github.ref_name }}.
-          files: target/release/patchkit.exe
+
+            - `patchkit-setup.exe` — installer (Start Menu + desktop shortcuts, adds PatchKit to PATH)
+            - `patchkit.exe` — standalone portable executable
+          files: |
+            target/release/patchkit.exe
+            dist/patchkit-setup.exe
 
       # Keep one rolling "latest" release up to date on every push.
       - name: Publish rolling release
@@ -54,4 +83,9 @@ jobs:
           name: Latest build
           body: |
             Automated build of `${{ github.ref_name }}` at ${{ github.sha }}.
-          files: target/release/patchkit.exe
+
+            - `patchkit-setup.exe` — installer (Start Menu + desktop shortcuts, adds PatchKit to PATH)
+            - `patchkit.exe` — standalone portable executable
+          files: |
+            target/release/patchkit.exe
+            dist/patchkit-setup.exe

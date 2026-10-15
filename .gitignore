@@ -1,1 +1,7 @@
 /target
+/tools/gen-assets/target
+/dist
+/$null
+/installer/test.exe
+/installer/test-uninst.exe
+/installer/test-results.log

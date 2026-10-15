@@ -134,6 +134,17 @@ fn run(
     // A process's elevation never changes after launch, so check it once.
     let is_admin = sys::is_admin();
     let mut job: Option<Job> = None;
+    // First run without Chocolatey: install it in the background, visible as
+    // "Running: Installing Chocolatey…" in the status bar.
+    if downloader::bootstrap_needed() {
+        job = Some(Job {
+            label: "Installing Chocolatey".to_string(),
+            started: Instant::now(),
+            handle: std::thread::spawn(downloader::bootstrap),
+            tab: 2,
+            refresh_activation: false,
+        });
+    }
     let mut quit_armed = false;
     let mut hits = HitAreas::default();
 

@@ -8,3 +8,7 @@ color-eyre = "0.6.5"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+# Compiles app icon + version info into the exe resource section.
+winresource = "0.1"

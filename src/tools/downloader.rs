@@ -9,14 +9,45 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::data::options::{StoreApp, StoreCategory};
+use crate::data::options::{STORE_CATEGORIES, StoreApp, StoreCategory, StoreScript};
 use crate::sys;
 
 /// 7-Zip console, fetched once because the bundled `tar.exe` can't read `.7z`.
 const SEVEN_ZIP_URL: &str = "https://www.7-zip.org/a/7zr.exe";
 
+/// The Chocolatey StoreApp, the one first-run bootstrap installs.
+fn chocolatey_app() -> Option<&'static StoreApp> {
+    STORE_CATEGORIES
+        .iter()
+        .flat_map(|category| category.apps)
+        .find(|app| app.name == "Chocolatey")
+}
+
+/// True when Chocolatey is missing and should be auto-installed at first run.
+pub fn bootstrap_needed() -> bool {
+    chocolatey_app().is_some_and(|app| !is_installed(app))
+}
+
+/// Install Chocolatey in the background; runs on a worker thread.
+pub fn bootstrap() -> Result<String, String> {
+    chocolatey_app()
+        .ok_or("no Chocolatey entry in the Store list".to_string())
+        .and_then(install)
+}
+
 /// Download `app` and install it; returns the status-bar message.
 pub fn install(app: &StoreApp) -> Result<String, String> {
+    match &app.script {
+        Some(StoreScript::Command(program, args)) => {
+            sys::run(program, args)?;
+            return Ok(format!("installed {}", app.name));
+        }
+        Some(StoreScript::GlobalPackage(package)) => {
+            global_install(app, package)?;
+            return Ok(format!("installed {} ({package})", app.name));
+        }
+        None => {}
+    }
     let dir = app_dir(app.name)?;
     let file = download(&resolve_link(app.link)?, &dir)?;
     let name = file.file_name().unwrap_or_default().to_string_lossy();
@@ -32,14 +63,73 @@ pub fn install(app: &StoreApp) -> Result<String, String> {
     }
 }
 
-/// "Downloaded" / "Not downloaded" for the status column.
+/// "Installed" when the app's marker (`app.exe`) exists on PATH or under a
+/// standard install location, "Install" otherwise; script apps are probed
+/// with `--version` instead.
 pub fn status(app: &StoreApp) -> String {
-    let text = if is_downloaded(app.name) {
-        "Downloaded"
+    if is_installed(app) {
+        "Installed".to_string()
     } else {
-        "Not downloaded"
-    };
-    text.to_string()
+        "Install".to_string()
+    }
+}
+
+/// True once `app` is installed: its marker should be on PATH, or exist under
+/// a standard install location or its own download folder (portable apps).
+fn is_installed(app: &StoreApp) -> bool {
+    let exe = app.exe;
+    if exe.is_empty() {
+        return is_downloaded(app.name);
+    }
+    let file = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    if app.script.is_some() {
+        return version_ok(exe);
+    }
+    if sys::exit_code("where.exe", &[file]).is_ok_and(|code| code == 0) {
+        return true;
+    }
+    install_roots(app).iter().any(|root| root.join(exe).exists())
+}
+
+/// Locations the install marker is searched under.
+fn install_roots(app: &StoreApp) -> Vec<PathBuf> {
+    let mut roots = vec![];
+    for var in ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData", "ProgramData", "USERPROFILE"] {
+        if let Some(base) = std::env::var_os(var) {
+            roots.push(PathBuf::from(&base));
+        }
+    }
+    if let Some(local) = std::env::var_os("LocalAppData") {
+        roots.push(Path::new(&local).join("Programs"));
+    }
+    if let Ok(dir) = app_dir(app.name) {
+        roots.push(dir);
+    }
+    roots
+}
+
+/// Install a global npm-style package: bun when it is installed, npm when
+/// node/npm is installed, otherwise an error for the status bar.
+fn global_install(app: &StoreApp, package: &str) -> Result<(), String> {
+    if version_ok("bun.exe") {
+        sys::run("bun", &["add", "-g", package])?;
+    } else if version_ok("node.exe") {
+        sys::run("npm", &["i", "-g", package])?;
+    } else {
+        return Err(format!(
+            "{} needs bun or node — install one from the dev-tools section first",
+            app.name
+        ));
+    }
+    Ok(())
+}
+
+/// True when a script-installed app responds to `--version` (its binary is
+/// on PATH). Runs through `cmd /C` so `.cmd`/`.bat` shims (e.g. pi's)
+/// launch like they do in a shell.
+fn version_ok(exe: &str) -> bool {
+    let command = exe.trim_end_matches(".exe");
+    sys::exit_code("cmd.exe", &["/C", command, "--version"]).is_ok_and(|code| code == 0)
 }
 
 /// `%LOCALAPPDATA%\PatchKit` — where PatchKit keeps its own files (the 7-Zip
