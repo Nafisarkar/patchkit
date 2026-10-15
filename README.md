@@ -36,28 +36,6 @@ cargo build --release
 The binary lands in `target/release/patchkit.exe`, with the app icon and
 version info embedded.
 
-### Build the installer
-
-1. Install [NSIS 3](https://nsis.sourceforge.io/) (or run the build on the
-   GitHub Actions workflow, which has it preinstalled).
-2. Regenerate installer assets from `icons/Icon.png` when the icon changes:
-
-   ```sh
-   cargo run --locked --manifest-path tools/gen-assets/Cargo.toml --release
-   ```
-
-   This writes `icons/Icon.ico` (exe + installer icon) and the NSIS
-   `installer/*.bmp` side panels.
-
-3. Compile the installer:
-
-   ```sh
-   makensis installer\patchkit.nsi                # uses version from Cargo.toml default
-   makensis /DVERSION=0.2.0 installer\patchkit.nsi  # or pin one explicitly
-   ```
-
-   `dist/patchkit-setup.exe` is the finished installer.
-
 ## Usage
 
 The **Windows Activation** tweak needs PatchKit to run as administrator; every
