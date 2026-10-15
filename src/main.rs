@@ -290,6 +290,7 @@ fn run(
                                 KeyCode::Char('r') => {
                                     cleaning_status.refresh();
                                     tweaks_status.refresh();
+                                    store_status.refresh(&STORE_CATEGORIES);
                                     message = "status refreshed".to_string();
                                     message_is_error = false;
                                 }

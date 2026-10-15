@@ -43,6 +43,17 @@ pub fn is_header(row: usize) -> bool {
 
 /// Render the Store table from the cached `status`.
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &StoreStatus) {
+    // Ratatui only adjusts the scroll offset to keep the *selected* row
+    // visible, and category headers are never selected — so after scrolling
+    // back up to the first app of a category, its header can stay scrolled
+    // off. Reset the offset whenever the header above the selection fell off
+    // the top; tab-to-tab the offset is fresh, which is why the header also
+    // "came back" after a tab switch.
+    let selected = state.selected().unwrap_or(0);
+    if selected > 0 && is_header(selected - 1) && *state.offset_mut() > selected - 1 {
+        *state.offset_mut() = selected - 1;
+    }
+
     let mut app_index = 0;
     let rows = rows()
         .into_iter()
@@ -116,7 +127,7 @@ mod tests {
             }
             screen.push('\n');
         }
-        assert!(screen.contains("Editors"), "no Dev tools header:\n{screen}");
+        assert!(screen.contains("IDEs & Dev Tools"), "no IDEs header:\n{screen}");
         assert!(screen.contains("Browsers"), "no Browsers header:\n{screen}");
     }
 }

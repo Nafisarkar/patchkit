@@ -21,6 +21,9 @@ const ADVANCED: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer
 
 /// `HKCU\Control Panel\Desktop` — holds the wallpaper import quality.
 const DESKTOP: &str = r"HKCU\Control Panel\Desktop";
+/// `HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl` — scheduler
+/// priority separation.
+const PRIORITY_CONTROL: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl";
 
 /// Read a REG_DWORD value from the registry, or `None` if it is missing or the
 /// command fails.
@@ -32,14 +35,21 @@ fn reg_dword(path: &str, name: &str) -> Option<u32> {
     u32::from_str_radix(raw.trim_start_matches("0x"), 16).ok()
 }
 
-/// Read a REG_SZ (string) value, or `None` if it is missing or the command
-/// fails.
+/// Read a REG_SZ or REG_EXPAND_SZ (string) value, or `None` if it is missing
+/// or the command fails.
 fn reg_sz(path: &str, name: &str) -> Option<String> {
     let out = sys::run("reg", &["query", path, "/v", name]).ok()?;
-    // The value line looks like "    Value    REG_SZ    Allow".
-    let line = out.lines().find(|l| l.contains("REG_SZ"))?;
+    // The value line looks like "    Value    REG_SZ    Allow". Values are
+    // also written as REG_EXPAND_SZ (variable-prefixed strings), which
+    // contains "REG_SZ" when matched loosely — so only read the line whose
+    // *type token* is a string type.
+    let line = out
+        .lines()
+        .find(|l| l.split_whitespace().any(|t| t == "REG_SZ" || t == "REG_EXPAND_SZ"))?;
     // Everything after the type token is the data (it may contain spaces).
-    Some(line.split_once("REG_SZ")?.1.trim().to_string())
+    let mut parts = line.split_whitespace().skip_while(|t| !t.starts_with("REG"));
+    parts.next()?; // the type token
+    Some(parts.collect::<Vec<_>>().join(" "))
 }
 
 /// Write a registry value of any supported type, creating it if necessary.
@@ -102,6 +112,137 @@ pub fn disable_wallpaper_compression() -> Result<String, String> {
     }
     set_dword(DESKTOP, "JPEGImportQuality", 100)?;
     Ok("wallpaper compression disabled (applies on the next wallpaper)".to_string())
+}
+
+// ----------------------------------------------------------------- process priority
+
+/// The value to write for a short, variable, high foreground boost: bits 1-0
+/// 01 (variable), bits 3-2 10 (high boost), bit 5 1 (short quantum). See
+/// https://forums.blurbusters.com/viewtopic.php?t=8535 — Windows defaults to
+/// 2 (long, variable, no boost).
+const WIN32_PRIORITY_HIGH_BOOST: u32 = 38;
+/// The Windows default `Win32PrioritySeparation` value (long, variable, no
+/// foreground boost) restored by the toggle.
+const WIN32_PRIORITY_DEFAULT: u32 = 2;
+
+/// True when the scheduler uses a high short variable foreground boost.
+pub fn foreground_boost_enabled() -> Option<bool> {
+    Some(
+        reg_dword(PRIORITY_CONTROL, "Win32PrioritySeparation").unwrap_or(WIN32_PRIORITY_DEFAULT)
+            == WIN32_PRIORITY_HIGH_BOOST,
+    )
+}
+
+/// Toggle the scheduler's foreground process priority: on, foreground apps
+/// get short, variable, high boost quanta (0x26); off, Windows' default
+/// balance (long quanta, no boost). Applies system-wide from the next
+/// scheduled task; no restart needed.
+pub fn toggle_foreground_boost() -> Result<String, String> {
+    require_admin()?;
+    let current = reg_dword(PRIORITY_CONTROL, "Win32PrioritySeparation")
+        .unwrap_or(WIN32_PRIORITY_DEFAULT);
+    if current == WIN32_PRIORITY_HIGH_BOOST {
+        set_dword(PRIORITY_CONTROL, "Win32PrioritySeparation", WIN32_PRIORITY_DEFAULT)?;
+        Ok("process priority reset to Windows default (long, no boost)".to_string())
+    } else {
+        set_dword(PRIORITY_CONTROL, "Win32PrioritySeparation", WIN32_PRIORITY_HIGH_BOOST)?;
+        Ok("process priority set to high foreground boost (short, 0x26)".to_string())
+    }
+}
+
+// ----------------------------------------------------------------- webdav limit
+
+/// `HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters` — the
+/// WebDAV client transfer size limit.
+const WEBDAV_PARAMETERS: &str = r"HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters";
+/// The lifted limit: `0xffffffff` bytes ≈ 4 GB (the maximum the client
+/// accepts); Windows ships at about 0x19000000 (~400 MB).
+const WEBDAV_LIFTED_LIMIT: u32 = 0xffffffff;
+
+/// True when the WebDAV client's file size limit is lifted to its maximum.
+pub fn webdav_limit_lifted() -> Option<bool> {
+    Some(
+        reg_dword(WEBDAV_PARAMETERS, "FileSizeLimitInBytes").unwrap_or(0x19000000)
+            == WEBDAV_LIFTED_LIMIT,
+    )
+}
+
+/// Lift the WebDAV client (`WebClient` service) file size limit to about 4 GB
+/// (`0xffffffff` bytes), so large files may be transferred over WebDAV drives.
+/// Restart the WebClient service (or reboot) for the new limit to apply.
+pub fn lift_webdav_limit() -> Result<String, String> {
+    require_admin()?;
+    if webdav_limit_lifted() == Some(true) {
+        return Ok("the WebDAV file size limit is already lifted".to_string());
+    }
+    set_dword(WEBDAV_PARAMETERS, "FileSizeLimitInBytes", WEBDAV_LIFTED_LIMIT)?;
+    Ok("WebDAV file size limit lifted to 4 GB (restart the WebClient service to apply)".to_string())
+}
+
+// ----------------------------------------------------------------- gpu scheduling
+
+/// `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers` — display
+/// scheduling settings.
+const GRAPHICS_DRIVERS: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers";
+
+/// True when Hardware-Accelerated GPU Scheduling is on (`HwSchMode` 2);
+/// Windows ships the feature off (`1`).
+pub fn gpu_scheduling_enabled() -> Option<bool> {
+    Some(reg_dword(GRAPHICS_DRIVERS, "HwSchMode").unwrap_or(1) == 2)
+}
+
+/// Toggle Hardware-Accelerated GPU Scheduling: on, the GPU manages its own
+/// VRAM scheduling (lower latency, better 1% lows); off, back to the Windows
+/// driver-driven default (`HwSchMode` 1). Trustworthy only on drivers that
+/// support it; a restart is required for the change to take effect.
+pub fn toggle_gpu_scheduling() -> Result<String, String> {
+    require_admin()?;
+    let on = if gpu_scheduling_enabled().unwrap_or(false) { 1 } else { 2 };
+    set_dword(GRAPHICS_DRIVERS, "HwSchMode", on)?;
+    Ok(format!(
+        "GPU scheduling {} — restart to apply",
+        if on == 2 { "enabled" } else { "disabled (default)" }
+    ))
+}
+
+// ----------------------------------------------------------------- multimedia scheduler
+
+/// `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile`
+/// — the Multimedia Class Scheduler Service (MMCSS) tuning values.
+const MMCSS_PROFILE: &str = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+
+/// Optimize the Multimedia Class Scheduler Service (MMCSS) for low latency:
+/// disables lazy startup, keeps the service always on, removes network
+/// throttling, raises system responsiveness to its minimum, and gives game
+/// tasks high CPU, I/O and GPU priority. Registry only; applies without a
+/// restart. Requires administrator rights.
+pub fn apply_multimedia_scheduler() -> Result<String, String> {
+    require_admin()?;
+    apply_registry_values(&[
+        (MMCSS_PROFILE, "NoLazyMode", "REG_DWORD", "1"),
+        (MMCSS_PROFILE, "AlwaysOn", "REG_DWORD", "1"),
+        // 0xffffffff removes network throttling entirely.
+        (MMCSS_PROFILE, "NetworkThrottlingIndex", "REG_DWORD", "0xffffffff"),
+        // The minimum meaningful boost; clamped values below 10 count as 20.
+        (MMCSS_PROFILE, "SystemResponsiveness", "REG_DWORD", "10"),
+        (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Priority", "REG_DWORD", "2"),
+        (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category", "REG_SZ", "High"),
+        (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "SFIO Priority", "REG_SZ", "High"),
+        (r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "GPU Priority", "REG_DWORD", "8"),
+    ])?;
+    Ok("multimedia scheduler optimized for low latency".to_string())
+}
+
+/// True when the MMCSS optimizations from [`apply_multimedia_scheduler`] are
+/// in place (checking the two signature values the apply writes).
+pub fn multimedia_scheduler_applied() -> Option<bool> {
+    let profile = reg_dword(MMCSS_PROFILE, "NetworkThrottlingIndex") == Some(0xffffffff)
+        && reg_dword(MMCSS_PROFILE, "SystemResponsiveness") == Some(10);
+    let games = reg_dword(
+        r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games",
+        "GPU Priority",
+    );
+    Some(profile && games == Some(8))
 }
 
 // ----------------------------------------------------------------- remove preinstalled apps
@@ -266,6 +407,10 @@ pub fn edge_debloat() -> Result<String, String> {
 /// `HKCU\...\CurrentVersion\Search` — Start Menu search settings.
 const SEARCH: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Search";
 
+/// `HKCU\Software\Policies\Microsoft\Windows\Explorer` — per-user Start
+/// Menu policies.
+const EXPLORER_POLICIES_USER: &str = r"HKCU\Software\Policies\Microsoft\Windows\Explorer";
+
 /// True when Start Menu search shows Bing web results. A missing value means
 /// the Windows default, which is enabled.
 pub fn bing_search_enabled() -> Option<bool> {
@@ -279,6 +424,17 @@ pub fn toggle_bing_search() -> Result<String, String> {
     let now_enabled = bing_search_enabled().unwrap_or(true);
     // Writing 1 disables Bing, 0 enables it — hence the non-obvious value.
     set_dword(SEARCH, "BingSearchEnabled", u32::from(now_enabled))?;
+    // DisableSearchBoxSuggestions is the policy that stops the search box
+    // from reaching the web at all: set it while disabling, remove it when
+    // re-enabling. The delete is ignored — the value may not exist yet.
+    if now_enabled {
+        set_dword(EXPLORER_POLICIES_USER, "DisableSearchBoxSuggestions", 1)?;
+    } else {
+        let _ = sys::run(
+            "reg",
+            &["delete", EXPLORER_POLICIES_USER, "/v", "DisableSearchBoxSuggestions", "/f"],
+        );
+    }
     sys::restart_explorer()?;
     Ok(format!(
         "Bing search {} in the Start Menu",
@@ -325,6 +481,230 @@ pub fn toggle_classic_context_menu() -> Result<String, String> {
     }
 }
 
+// --------------------------------------------------------------- desktop icons
+
+/// `HKCU\...\Explorer\HideDesktopIcons\NewStartPanel` — a value per
+/// namespace CLSID: `1` hides the desktop icon, `0` (or the key's default)
+/// shows it. Windows writes only the icons it hides, so each icon's absent
+/// state differs — This PC, User folder and others are hidden by default.
+const DESKTOP_ICONS: &str =
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel";
+/// This PC ("{20D04FE0-…}") — hidden by default on the desktop.
+const THIS_PC_ICON: &str = "{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+/// Recycle Bin ("{645FF040-…}") — shown by default.
+const RECYCLE_BIN_ICON: &str = "{645FF040-5081-101B-9F08-00AA002F954E}";
+/// The user's profile folder ("{59031a47-…}") — hidden by default.
+const USER_FOLDER_ICON: &str = "{59031a47-3f72-44a7-89c5-5595fe6b30ee}";
+/// Network ("{F02C1A0D-…}") — hidden by default.
+const NETWORK_ICON: &str = "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}";
+/// Control Panel ("{5399E694-…}") — hidden by default.
+const CONTROL_PANEL_ICON: &str = "{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}";
+
+/// True when a desktop icon is shown; an absent value counts as
+/// `default_shown` (the icon's stock state on a fresh install).
+fn desktop_icon_shown(name: &str, default_shown: bool) -> Option<bool> {
+    Some(reg_dword(DESKTOP_ICONS, name).unwrap_or(u32::from(!default_shown)) == 0)
+}
+
+/// Show or hide one desktop icon, then refresh the desktop via Explorer.
+fn set_desktop_icon(name: &str, show: bool) -> Result<(), String> {
+    set_dword(DESKTOP_ICONS, name, u32::from(!show))?;
+    sys::restart_explorer()
+}
+
+/// Flip one desktop icon between shown and hidden.
+fn toggle_desktop_icon(name: &str, default_shown: bool, what: &str) -> Result<String, String> {
+    let showing = desktop_icon_shown(name, default_shown).unwrap_or(default_shown);
+    set_desktop_icon(name, !showing)?;
+    Ok(format!(
+        "{what} icon {}",
+        if showing { "hidden" } else { "shown" }
+    ))
+}
+
+/// Toggle the This PC desktop icon.
+pub fn toggle_this_pc_icon() -> Result<String, String> {
+    toggle_desktop_icon(THIS_PC_ICON, false, "This PC")
+}
+
+/// True when This PC is shown on the desktop.
+pub fn this_pc_icon_shown() -> Option<bool> {
+    desktop_icon_shown(THIS_PC_ICON, false)
+}
+
+/// Toggle the Recycle Bin desktop icon.
+pub fn toggle_recycle_bin_icon() -> Result<String, String> {
+    toggle_desktop_icon(RECYCLE_BIN_ICON, true, "Recycle Bin")
+}
+
+/// True when the Recycle Bin is shown on the desktop.
+pub fn recycle_bin_icon_shown() -> Option<bool> {
+    desktop_icon_shown(RECYCLE_BIN_ICON, true)
+}
+
+/// Toggle the user profile folder desktop icon.
+pub fn toggle_user_folder_icon() -> Result<String, String> {
+    toggle_desktop_icon(USER_FOLDER_ICON, false, "user folder")
+}
+
+/// True when the user profile folder is shown on the desktop.
+pub fn user_folder_icon_shown() -> Option<bool> {
+    desktop_icon_shown(USER_FOLDER_ICON, false)
+}
+
+/// Toggle the Network desktop icon.
+pub fn toggle_network_icon() -> Result<String, String> {
+    toggle_desktop_icon(NETWORK_ICON, false, "Network")
+}
+
+/// True when Network is shown on the desktop.
+pub fn network_icon_shown() -> Option<bool> {
+    desktop_icon_shown(NETWORK_ICON, false)
+}
+
+/// Toggle the Control Panel desktop icon.
+pub fn toggle_control_panel_icon() -> Result<String, String> {
+    toggle_desktop_icon(CONTROL_PANEL_ICON, false, "Control Panel")
+}
+
+/// True when Control Panel is shown on the desktop.
+pub fn control_panel_icon_shown() -> Option<bool> {
+    desktop_icon_shown(CONTROL_PANEL_ICON, false)
+}
+
+/// True when the desktop shows icons at all (`HideIcons` 0 or absent).
+pub fn desktop_icons_visible() -> Option<bool> {
+    Some(reg_dword(ADVANCED, "HideIcons").unwrap_or(0) == 0)
+}
+
+/// Toggle the whole desktop icon visibility (right-click Desktop > view).
+pub fn toggle_desktop_icons() -> Result<String, String> {
+    let show = !desktop_icons_visible().unwrap_or(true);
+    set_dword(ADVANCED, "HideIcons", u32::from(!show))?;
+    sys::restart_explorer()?;
+    Ok(format!(
+        "desktop icons {}",
+        if show { "shown" } else { "hidden" }
+    ))
+}
+
+// --------------------------------------------------------------- shortcut arrow
+
+/// `HKLM\...\Explorer\Shell Icons` — the value `29` overrides the shortcut
+/// arrow overlay icon.
+const SHELL_ICONS: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons";
+/// A transparent icon resource inside shell32 (the classic no-arrow trick).
+const BLANK_ARROW_ICON: &str = r"%windir%\System32\shell32.dll,-50";
+
+/// True when shortcuts still show their arrow overlay: no override value, or
+/// one that is not a known blank/transparent icon.
+pub fn shortcut_arrow_visible() -> Option<bool> {
+    let value = reg_sz(SHELL_ICONS, "29");
+    Some(match value {
+        None => true,
+        Some(value) => !{
+            let lower = value.to_ascii_lowercase();
+            lower.ends_with(".dll,-50") || lower.ends_with(".dll,50")
+                || lower.ends_with("blank.ico") || lower.ends_with("transparent.ico")
+                || lower.ends_with("blankicon.ico")
+        },
+    })
+}
+
+/// Toggle the shortcut arrow overlay: hidden points the `Shell Icons`
+/// `29` value at a transparent icon; shown deletes the value back to the
+/// Windows default. HKLM, so administrator rights are needed.
+pub fn toggle_shortcut_arrow() -> Result<String, String> {
+    require_admin()?;
+    if shortcut_arrow_visible().unwrap_or(true) {
+        set_reg(SHELL_ICONS, "29", "REG_EXPAND_SZ", BLANK_ARROW_ICON)?;
+        sys::restart_explorer()?;
+        Ok("shortcut arrow removed".to_string())
+    } else {
+        sys::run("reg", &["delete", SHELL_ICONS, "/v", "29", "/f"])?;
+        sys::restart_explorer()?;
+        Ok("shortcut arrow restored".to_string())
+    }
+}
+
+// ----------------------------------------------------------- user experience
+
+/// `HKCU\...\Explorer\Serialize` — startup delay tuning.
+const EXPLORER_SERIALIZE: &str =
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize";
+
+/// True when the Explorer startup delay and menu delay are both zeroed.
+/// MenuShowDelay is the Control Panel "MenuShowDelay" string metric.
+pub fn explorer_menus_sped_up() -> Option<bool> {
+    Some(
+        reg_dword(EXPLORER_SERIALIZE, "StartupDelayInMSec").unwrap_or(400) == 0
+            && reg_sz(DESKTOP, "MenuShowDelay").unwrap_or_default().trim() == "0",
+    )
+}
+
+/// Toggle the Explorer startup delay and menu animation delay: on,
+/// `StartupDelayInMSec` is 0 and `MenuShowDelay` 0 (menus open instantly);
+/// off, both go back to the Windows defaults (no Serialize value, menu delay
+/// 400).
+pub fn toggle_explorer_menu_speed() -> Result<String, String> {
+    if explorer_menus_sped_up().unwrap_or(false) {
+        sys::run(
+            "reg",
+            &["delete", EXPLORER_SERIALIZE, "/v", "StartupDelayInMSec", "/f"],
+        )?;
+        set_reg(DESKTOP, "MenuShowDelay", "REG_SZ", "400")?;
+        Ok("Explorer startup and menu delays restored".to_string())
+    } else {
+        set_dword(EXPLORER_SERIALIZE, "StartupDelayInMSec", 0)?;
+        set_reg(DESKTOP, "MenuShowDelay", "REG_SZ", "0")?;
+        Ok("Explorer startup and menu delays removed".to_string())
+    }
+}
+
+/// True when the Start menu's Recommended section is hidden by policy.
+pub fn start_recommended_hidden() -> Option<bool> {
+    Some(reg_dword(EXPLORER_POLICIES_USER, "HideRecommendedSection").unwrap_or(0) == 1)
+}
+
+/// Toggle the Start menu Recommended section (Windows 11): hidden shows only
+/// pinned apps and keeps its suggestions private; shown restores the default.
+/// Applies after Explorer restarts (done for you).
+pub fn toggle_start_recommended() -> Result<String, String> {
+    if start_recommended_hidden().unwrap_or(false) {
+        sys::run(
+            "reg",
+            &["delete", EXPLORER_POLICIES_USER, "/v", "HideRecommendedSection", "/f"],
+        )?;
+        sys::restart_explorer()?;
+        Ok("Start menu Recommended section shown".to_string())
+    } else {
+        set_dword(EXPLORER_POLICIES_USER, "HideRecommendedSection", 1)?;
+        sys::restart_explorer()?;
+        Ok("Start menu Recommended section hidden".to_string())
+    }
+}
+
+/// `HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings` — pause settings.
+const UPDATE_UX_SETTINGS: &str = r"HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings";
+
+/// True when the Windows Update pause slider can go to the maximum
+/// (`FlightSettingsMaxPauseDays` at the DWORD maximum).
+pub fn update_pause_limit_lifted() -> Option<bool> {
+    Some(reg_dword(UPDATE_UX_SETTINGS, "FlightSettingsMaxPauseDays").unwrap_or(0) == 0xffffffff)
+}
+
+/// Let the Settings pause slider pause for as long as Windows will honor:
+/// `FlightSettingsMaxPauseDays` at the DWORD maximum. Versions that dropped
+/// the setting ignore it; a safe no-op either way. Requires admin rights.
+pub fn lift_update_pause_limit() -> Result<String, String> {
+    require_admin()?;
+    if update_pause_limit_lifted() == Some(true) {
+        return Ok("the update pause limit is already maximized".to_string());
+    }
+    set_dword(UPDATE_UX_SETTINGS, "FlightSettingsMaxPauseDays", 0xffffffff)?;
+    Ok("Windows Update pause slider maximized".to_string())
+}
+
 // ----------------------------------------------------------------- windows ai
 
 /// `HKLM\...\Policies\Explorer` — hides settings pages such as the AI ones.
@@ -332,10 +712,17 @@ const EXPLORER_POLICIES: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
 /// `HKLM\SOFTWARE\Policies\WindowsNotepad` — Notepad AI features policy.
 const WINDOWS_NOTEPAD: &str = r"HKLM\SOFTWARE\Policies\WindowsNotepad";
+/// `HKLM\...\Policies\Microsoft\Windows\WindowsAI` — Recall and Click To Do
+/// AI policies. Mirror values written in HKCU for per-user coverage.
+const WINDOWS_AI_POLICIES: &str = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
+const WINDOWS_AI_POLICIES_USER: &str = r"HKCU\SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
 
 /// True when the Windows AI features were disabled and removed.
 pub fn windows_ai_disabled() -> Option<bool> {
-    Some(reg_dword(WINDOWS_NOTEPAD, "DisableAIFeatures").unwrap_or(0) == 1)
+    Some(
+        reg_dword(WINDOWS_NOTEPAD, "DisableAIFeatures").unwrap_or(0) == 1
+            && reg_dword(WINDOWS_AI_POLICIES, "DisableAIDataAnalysis").unwrap_or(0) == 1,
+    )
 }
 
 /// Disable and remove Windows AI: Recall, Copilot, Notepad AI features and the
@@ -349,6 +736,21 @@ pub fn disable_windows_ai() -> Result<String, String> {
         "hide:aicomponents",
     )?;
     set_dword(WINDOWS_NOTEPAD, "DisableAIFeatures", 1)?;
+
+    // Kill-switch policies: DisableAIDataAnalysis stops Recall snapshots (and
+    // deletes existing ones); TurnOffSavingSnapshots mirrors the documented
+    // "Turn off saving snapshots" policy; AllowRecallEnablement=0 is device
+    // scope only and removes the Recall bits on 24H2 (26100.3915+);
+    // DisableClickToDo turns off the Click To Do AI overlay.
+    apply_registry_values(&[
+        (WINDOWS_AI_POLICIES, "DisableAIDataAnalysis", "REG_DWORD", "1"),
+        (WINDOWS_AI_POLICIES, "AllowRecallEnablement", "REG_DWORD", "0"),
+        (WINDOWS_AI_POLICIES, "TurnOffSavingSnapshots", "REG_DWORD", "1"),
+        (WINDOWS_AI_POLICIES, "DisableClickToDo", "REG_DWORD", "1"),
+        (WINDOWS_AI_POLICIES_USER, "DisableAIDataAnalysis", "REG_DWORD", "1"),
+        (WINDOWS_AI_POLICIES_USER, "TurnOffSavingSnapshots", "REG_DWORD", "1"),
+        (WINDOWS_AI_POLICIES_USER, "DisableClickToDo", "REG_DWORD", "1"),
+    ])?;
 
     // Errors inside the script are silenced so one absent component (no
     // Recall, no winget, …) does not abort the rest.
@@ -469,15 +871,19 @@ const CLOUD_CONTENT: &str = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudCont
 
 /// True when promoted app installs and Store suggestions are disabled.
 pub fn consumer_features_disabled() -> Option<bool> {
-    Some(reg_dword(CLOUD_CONTENT, "DisableWindowsConsumerFeatures").unwrap_or(0) == 1)
+    Some(
+        reg_dword(CLOUD_CONTENT, "DisableWindowsConsumerFeatures").unwrap_or(0) == 1
+            && reg_dword(CLOUD_CONTENT, "DisableConsumerAccountStateContent").unwrap_or(0) == 1,
+    )
 }
 
-/// Stop promoted app installs and reduce Microsoft Store app suggestions.
-/// Requires administrator rights.
+/// Stop promoted app installs and reduce Microsoft Store app suggestions,
+/// plus the Microsoft 365 account ads in Settings. Requires admin rights.
 pub fn disable_consumer_features() -> Result<String, String> {
     require_admin()?;
     set_dword(CLOUD_CONTENT, "DisableWindowsConsumerFeatures", 1)?;
-    Ok("consumer features disabled".to_string())
+    set_dword(CLOUD_CONTENT, "DisableConsumerAccountStateContent", 1)?;
+    Ok("consumer features and Microsoft 365 ads disabled".to_string())
 }
 
 // ----------------------------------------------------- delivery optimization
@@ -611,17 +1017,264 @@ pub fn services_applied() -> Option<bool> {
     )
 }
 
-/// Set unneeded services to manual/disabled and align the svchost splitting
+/// The service startup types to enforce, `(name, sc config start= mode)`.
+/// Services that do not exist on an install are skipped. The list mirrors the
+/// classic "ConfigureServices" debloat: telemetry/remote/RPC service trees
+/// disabled, rarely-used services manual, core services kept on automatic
+/// (delayed where Windows uses it).
+const SERVICE_STARTUP: [(&str, &str); 239] = [
+    ("AJRouter", "disabled"),
+    ("ALG", "manual"),
+    ("AppIDSvc", "manual"),
+    ("AppMgmt", "manual"),
+    ("AppReadiness", "manual"),
+    ("AppVClient", "disabled"),
+    ("AppXSvc", "manual"),
+    ("Appinfo", "manual"),
+    ("AssignedAccessManagerSvc", "disabled"),
+    ("AudioEndpointBuilder", "auto"),
+    ("Audiosrv", "auto"),
+    ("AxInstSV", "manual"),
+    ("BDESVC", "manual"),
+    ("BFE", "auto"),
+    ("BITS", "delayed-auto"),
+    ("BTAGService", "manual"),
+    ("BrokerInfrastructure", "auto"),
+    ("Browser", "manual"),
+    ("BthAvctpSvc", "auto"),
+    ("BthHFSrv", "auto"),
+    ("CDPSvc", "manual"),
+    ("COMSysApp", "manual"),
+    ("CertPropSvc", "manual"),
+    ("ClipSVC", "manual"),
+    ("CoreMessagingRegistrar", "auto"),
+    ("CryptSvc", "auto"),
+    ("CscService", "manual"),
+    ("DPS", "auto"),
+    ("DcomLaunch", "auto"),
+    ("DcpSvc", "manual"),
+    ("DevQueryBroker", "manual"),
+    ("DeviceAssociationService", "manual"),
+    ("DeviceInstall", "manual"),
+    ("Dhcp", "auto"),
+    ("DiagTrack", "disabled"),
+    ("DialogBlockingService", "disabled"),
+    ("DispBrokerDesktopSvc", "auto"),
+    ("DisplayEnhancementService", "manual"),
+    ("DmEnrollmentSvc", "manual"),
+    ("Dnscache", "auto"),
+    ("EFS", "manual"),
+    ("EapHost", "manual"),
+    ("EntAppSvc", "manual"),
+    ("EventLog", "auto"),
+    ("EventSystem", "auto"),
+    ("FDResPub", "manual"),
+    ("Fax", "disabled"),
+    ("FontCache", "auto"),
+    ("FrameServer", "manual"),
+    ("FrameServerMonitor", "manual"),
+    ("GraphicsPerfSvc", "manual"),
+    ("HomeGroupListener", "disabled"),
+    ("HomeGroupProvider", "disabled"),
+    ("HvHost", "manual"),
+    ("IEEtwCollectorService", "manual"),
+    ("IKEEXT", "manual"),
+    ("InstallService", "manual"),
+    ("InventorySvc", "manual"),
+    ("IpxlatCfgSvc", "manual"),
+    ("KeyIso", "auto"),
+    ("KtmRm", "manual"),
+    ("LSM", "auto"),
+    ("LanmanServer", "manual"),
+    ("LanmanWorkstation", "auto"),
+    ("LicenseManager", "manual"),
+    ("LxpSvc", "manual"),
+    ("MSDTC", "manual"),
+    ("MSiSCSI", "manual"),
+    ("MapsBroker", "delayed-auto"),
+    ("McpManagementService", "manual"),
+    ("MicrosoftEdgeElevationService", "manual"),
+    ("MixedRealityOpenXRSvc", "manual"),
+    ("MpsSvc", "auto"),
+    ("MsKeyboardFilter", "manual"),
+    ("NaturalAuthentication", "manual"),
+    ("NcaSvc", "manual"),
+    ("NcbService", "manual"),
+    ("NcdAutoSetup", "manual"),
+    ("NetSetupSvc", "manual"),
+    ("NetTcpPortSharing", "disabled"),
+    ("Netman", "auto"),
+    ("NgcCtnrSvc", "manual"),
+    ("NgcSvc", "manual"),
+    ("NlaSvc", "auto"),
+    ("PNRPAutoReg", "manual"),
+    ("PNRPsvc", "manual"),
+    ("PcaSvc", "manual"),
+    ("PeerDistSvc", "manual"),
+    ("PerfHost", "manual"),
+    ("PhoneSvc", "manual"),
+    ("PlugPlay", "auto"),
+    ("PolicyAgent", "manual"),
+    ("Power", "auto"),
+    ("PrintNotify", "manual"),
+    ("ProfSvc", "auto"),
+    ("PushToInstall", "manual"),
+    ("QWAVE", "manual"),
+    ("RasAuto", "manual"),
+    ("RasMan", "manual"),
+    ("RemoteAccess", "disabled"),
+    ("RemoteRegistry", "disabled"),
+    ("RetailDemo", "disabled"),
+    ("RmSvc", "manual"),
+    ("RpcEptMapper", "auto"),
+    ("RpcLocator", "manual"),
+    ("RpcSs", "auto"),
+    ("SCPolicySvc", "manual"),
+    ("SCardSvr", "manual"),
+    ("SDRSVC", "manual"),
+    ("SEMgrSvc", "manual"),
+    ("SENS", "auto"),
+    ("SNMPTRAP", "manual"),
+    ("SSDPSRV", "manual"),
+    ("SamSs", "auto"),
+    ("ScDeviceEnum", "manual"),
+    ("Schedule", "auto"),
+    ("SensorDataService", "manual"),
+    ("SensorService", "manual"),
+    ("SensrSvc", "manual"),
+    ("SessionEnv", "manual"),
+    ("SharedAccess", "manual"),
+    ("SharedRealitySvc", "manual"),
+    ("ShellHWDetection", "auto"),
+    ("SmsRouter", "manual"),
+    ("Spooler", "manual"),
+    ("SstpSvc", "manual"),
+    ("StiSvc", "manual"),
+    ("StorSvc", "manual"),
+    ("SystemEventsBroker", "auto"),
+    ("TabletInputService", "manual"),
+    ("TapiSrv", "manual"),
+    ("TermService", "manual"),
+    ("Themes", "auto"),
+    ("TieringEngineService", "manual"),
+    ("TimeBroker", "manual"),
+    ("TimeBrokerSvc", "manual"),
+    ("TokenBroker", "manual"),
+    ("TrkWks", "auto"),
+    ("TroubleshootingSvc", "manual"),
+    ("UI0Detect", "manual"),
+    ("UevAgentService", "disabled"),
+    ("UmRdpService", "manual"),
+    ("UserManager", "auto"),
+    ("UsoSvc", "manual"),
+    ("VGAuthService", "manual"),
+    ("VMTools", "manual"),
+    ("VSS", "manual"),
+    ("VacSvc", "manual"),
+    ("VaultSvc", "auto"),
+    ("W32Time", "manual"),
+    ("WEPHOSTSVC", "manual"),
+    ("WFDSConMgrSvc", "manual"),
+    ("WMPNetworkSvc", "manual"),
+    ("WManSvc", "manual"),
+    ("WPDBusEnum", "manual"),
+    ("WSearch", "manual"),
+    ("WaaSMedicSvc", "manual"),
+    ("WalletService", "manual"),
+    ("WarpJITSvc", "manual"),
+    ("WbioSrvc", "manual"),
+    ("Wcmsvc", "auto"),
+    ("WcsPlugInService", "manual"),
+    ("WdiServiceHost", "manual"),
+    ("WdiSystemHost", "manual"),
+    ("WebClient", "manual"),
+    ("Wecsvc", "manual"),
+    ("WerSvc", "manual"),
+    ("WiaRpc", "manual"),
+    ("WinHttpAutoProxySvc", "manual"),
+    ("WinRM", "manual"),
+    ("Winmgmt", "auto"),
+    ("WlanSvc", "auto"),
+    ("WpcMonSvc", "manual"),
+    ("WpnService", "manual"),
+    ("XblAuthManager", "manual"),
+    ("XblGameSave", "manual"),
+    ("XboxGipSvc", "manual"),
+    ("XboxNetApiSvc", "manual"),
+    ("autotimesvc", "manual"),
+    ("bthserv", "manual"),
+    ("camsvc", "manual"),
+    ("cloudidsvc", "manual"),
+    ("dcsvc", "manual"),
+    ("defragsvc", "manual"),
+    ("diagnosticshub.standardcollector.service", "manual"),
+    ("diagsvc", "manual"),
+    ("dmwappushservice", "manual"),
+    ("dot3svc", "manual"),
+    ("edgeupdate", "manual"),
+    ("edgeupdatem", "manual"),
+    ("embeddedmode", "manual"),
+    ("fdPHost", "manual"),
+    ("fhsvc", "manual"),
+    ("hidserv", "manual"),
+    ("icssvc", "manual"),
+    ("iphlpsvc", "auto"),
+    ("lfsvc", "manual"),
+    ("lltdsvc", "manual"),
+    ("lmhosts", "manual"),
+    ("msiserver", "manual"),
+    ("netprofm", "manual"),
+    ("nsi", "auto"),
+    ("p2pimsvc", "manual"),
+    ("p2psvc", "manual"),
+    ("perceptionsimulation", "manual"),
+    ("pla", "manual"),
+    ("seclogon", "manual"),
+    ("shpamsvc", "disabled"),
+    ("smphost", "manual"),
+    ("spectrum", "manual"),
+    ("sppsvc", "delayed-auto"),
+    ("ssh-agent", "disabled"),
+    ("svsvc", "manual"),
+    ("swprv", "manual"),
+    ("tiledatamodelsvc", "auto"),
+    ("tzautoupdate", "disabled"),
+    ("upnphost", "manual"),
+    ("vds", "manual"),
+    ("vm3dservice", "manual"),
+    ("vmicguestinterface", "manual"),
+    ("vmicheartbeat", "manual"),
+    ("vmickvpexchange", "manual"),
+    ("vmicrdv", "manual"),
+    ("vmicshutdown", "manual"),
+    ("vmictimesync", "manual"),
+    ("vmicvmsession", "manual"),
+    ("vmicvss", "manual"),
+    ("vmvss", "manual"),
+    ("wbengine", "manual"),
+    ("wcncsvc", "manual"),
+    ("webthreatdefsvc", "manual"),
+    ("wercplsupport", "manual"),
+    ("wisvc", "manual"),
+    ("wlidsvc", "manual"),
+    ("wlpasvc", "manual"),
+    ("wmiApSrv", "manual"),
+    ("workfolderssvc", "manual"),
+    ("wscsvc", "delayed-auto"),
+    ("wuauserv", "manual"),
+
+];
+
+/// Set unneeded services to manual/disabled, restore the intended automatic
+/// services to their default startup, and align the svchost splitting
 /// threshold with installed memory, which reduces the number of svchost.exe
 /// processes. Requires administrator rights.
 pub fn set_services_manual() -> Result<String, String> {
     require_admin()?;
     // Some of these services do not exist on every install; skip failures.
-    set_service_start("CscService", "disabled");
-    set_service_start("DiagTrack", "disabled");
-    set_service_start("SharedAccess", "disabled");
-    set_service_start("MapsBroker", "manual");
-    set_service_start("StorSvc", "manual");
+    for (name, mode) in &SERVICE_STARTUP {
+        set_service_start(name, mode);
+    }
     // Splitting every service into its own svchost only pays off with plenty
     // of RAM; the threshold in KB should match the installed memory.
     sys::powershell(
@@ -630,7 +1283,7 @@ $memory = (Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).
 Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control' \
     -Name SvcHostSplitThresholdInKB -Value $memory -Type DWord",
     )?;
-    Ok("services updated and svchost splitting tuned".to_string())
+    Ok("service startup types updated and svchost splitting tuned".to_string())
 }
 
 // ------------------------------------------------- explorer home and gallery
@@ -654,13 +1307,15 @@ pub fn explorer_home_hidden() -> Option<bool> {
 /// location (restarts Explorer to apply it).
 pub fn toggle_explorer_home() -> Result<String, String> {
     if explorer_home_hidden().unwrap_or(false) {
+        // Restock the defaults: the values may not exist on every install,
+        // so ignore the deletes instead of failing the whole restore.
         for key in [EXPLORER_HOME, EXPLORER_GALLERY] {
-            sys::run(
+            let _ = sys::run(
                 "reg",
                 &["delete", key, "/v", "System.IsPinnedToNameSpaceTree", "/f"],
-            )?;
+            );
         }
-        sys::run("reg", &["delete", ADVANCED, "/v", "LaunchTo", "/f"])?;
+        let _ = sys::run("reg", &["delete", ADVANCED, "/v", "LaunchTo", "/f"]);
         sys::restart_explorer()?;
         Ok("Home and Gallery shown again".to_string())
     } else {
@@ -686,7 +1341,7 @@ const DWM: &str = r"HKCU\Software\Microsoft\Windows\DWM";
 /// The values that make up the "best performance" visual effects preset:
 /// `(path, name, type, data)`. String values are REG_SZ because that is what
 /// the Control Panel applets write and read back.
-const VISUAL_FX_VALUES: [(&str, &str, &str, &str); 13] = [
+const VISUAL_FX_VALUES: [(&str, &str, &str, &str); 14] = [
     (DESKTOP, "DragFullWindows", "REG_SZ", "0"),
     (DESKTOP, "MenuShowDelay", "REG_SZ", "200"),
     (WINDOW_METRICS, "MinAnimate", "REG_SZ", "0"),
@@ -697,6 +1352,7 @@ const VISUAL_FX_VALUES: [(&str, &str, &str, &str); 13] = [
     (ADVANCED, "TaskbarAnimations", "REG_DWORD", "0"),
     (VISUAL_EFFECTS, "VisualFXSetting", "REG_DWORD", "3"),
     (DWM, "EnableAeroPeek", "REG_DWORD", "0"),
+    (PERSONALIZE, "EnableTransparency", "REG_DWORD", "0"),
     (ADVANCED, "TaskbarMn", "REG_DWORD", "0"),
     (ADVANCED, "ShowTaskViewButton", "REG_DWORD", "0"),
     (SEARCH, "SearchboxTaskbarMode", "REG_DWORD", "0"),
@@ -1078,6 +1734,34 @@ pub struct TweaksStatus {
     pub wsl: String,
     /// Text for the "O&O ShutUp10++" row.
     pub ooshutup: String,
+    /// Text for the "Process Priority" row.
+    pub process_priority: String,
+    /// Text for the "GPU Scheduling" row.
+    pub gpu_scheduling: String,
+    /// Text for the "Multimedia Scheduler" row.
+    pub multimedia_scheduler: String,
+    /// Text for the "WebDAV Limit" row.
+    pub webdav_limit: String,
+    /// Text for the "Explorer & Menu Speed" row.
+    pub explorer_speed: String,
+    /// Text for the "Start Recommended" row.
+    pub start_recommended: String,
+    /// Text for the "Update Pause Limit" row.
+    pub update_pause_limit: String,
+    /// Text for the "Desktop Icons" row.
+    pub desktop_icons: String,
+    /// Text for the "This PC Icon" row.
+    pub this_pc_icon: String,
+    /// Text for the "Recycle Bin Icon" row.
+    pub recycle_bin_icon: String,
+    /// Text for the "User Folder Icon" row.
+    pub user_folder_icon: String,
+    /// Text for the "Network Icon" row.
+    pub network_icon: String,
+    /// Text for the "Control Panel Icon" row.
+    pub control_panel_icon: String,
+    /// Text for the "Shortcut Arrow" row.
+    pub shortcut_arrow: String,
 }
 
 impl TweaksStatus {
@@ -1116,6 +1800,21 @@ impl TweaksStatus {
         self.hyperv = label(hyperv_enabled(), "On", "Off");
         self.wsl = label(wsl_enabled(), "On", "Off");
         self.ooshutup = label(ooshutup_downloaded(), "Downloaded", "Not downloaded");
+        self.process_priority = label(foreground_boost_enabled(), "Boost", "Default");
+        self.gpu_scheduling = label(gpu_scheduling_enabled(), "On", "Off");
+        self.multimedia_scheduler =
+            label(multimedia_scheduler_applied(), "Applied", "Default");
+        self.webdav_limit = label(webdav_limit_lifted(), "4 GB", "400 MB");
+        self.explorer_speed = label(explorer_menus_sped_up(), "Fast", "Default");
+        self.start_recommended = label(start_recommended_hidden(), "Hidden", "Shown");
+        self.update_pause_limit = label(update_pause_limit_lifted(), "Max", "Default");
+        self.desktop_icons = label(desktop_icons_visible(), "Shown", "Hidden");
+        self.this_pc_icon = label(this_pc_icon_shown(), "Shown", "Hidden");
+        self.recycle_bin_icon = label(recycle_bin_icon_shown(), "Shown", "Hidden");
+        self.user_folder_icon = label(user_folder_icon_shown(), "Shown", "Hidden");
+        self.network_icon = label(network_icon_shown(), "Shown", "Hidden");
+        self.control_panel_icon = label(control_panel_icon_shown(), "Shown", "Hidden");
+        self.shortcut_arrow = label(shortcut_arrow_visible(), "Shown", "Removed");
     }
 
     /// Refresh the activation status. Slow (spawns PowerShell/WMI), so it is

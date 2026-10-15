@@ -48,7 +48,7 @@ jobs:
           $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.0.0' }
           & "$nsis" "/DVERSION=$ver" /V2 installer\patchkit.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Test-Path dist\patchkit-setup.exe || exit 1
+          if (-not (Test-Path dist\patchkit-setup.exe)) { exit 1 }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

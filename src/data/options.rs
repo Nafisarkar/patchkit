@@ -1,7 +1,8 @@
-//! The user-facing option lists for each tab. Every entry is a
-//! `(name, description, needs_admin, action)` row: the pages build the table
-//! from the first three fields, and `main.rs` runs the action on a worker
-//! thread. `None` actions are display-only rows.
+//! The user-facing option lists for each tab. The Cleaning and Tweaks tabs
+//! are tables of `(name, description, needs_admin, action)` rows; the Store
+//! tab is a list of `StoreApp` downloads grouped by `StoreCategory`. The
+//! pages build the table rows, and `main.rs` runs the selected action on a
+//! worker thread.
 
 /// A tweak or cleaning action: run on a worker thread, returns the text for
 /// the status bar.
@@ -42,7 +43,7 @@ pub const CLEANING_OPTIONS: [(&str, &str, bool, Option<Action>); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
+pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 40] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -182,6 +183,90 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
         Some(tweaks::toggle_background_apps),
     ),
     (
+        "Explorer & Menu Speed",
+        "Removes the Explorer startup delay and makes menus open instantly",
+        false,
+        Some(tweaks::toggle_explorer_menu_speed),
+    ),
+    (
+        "Start Recommended",
+        "Hides the Recommended section in the Start menu (Windows 11)",
+        false,
+        Some(tweaks::toggle_start_recommended),
+    ),
+    (
+        "Update Pause Limit",
+        "Lets the update pause slider go to the maximum Windows honors",
+        true,
+        Some(tweaks::lift_update_pause_limit),
+    ),
+    (
+        "WebDAV Limit",
+        "Raises the WebDAV file transfer limit from ~400 MB to 4 GB",
+        true,
+        Some(tweaks::lift_webdav_limit),
+    ),
+    (
+        "Multimedia Scheduler",
+        "Optimizes MMCSS for low latency: no network throttling, min responsiveness, high game task priority",
+        true,
+        Some(tweaks::apply_multimedia_scheduler),
+    ),
+    (
+        "Desktop Icons",
+        "Shows or hides all desktop icons",
+        false,
+        Some(tweaks::toggle_desktop_icons),
+    ),
+    (
+        "This PC Icon",
+        "Shows This PC on the desktop",
+        false,
+        Some(tweaks::toggle_this_pc_icon),
+    ),
+    (
+        "Recycle Bin Icon",
+        "Shows the Recycle Bin on the desktop",
+        false,
+        Some(tweaks::toggle_recycle_bin_icon),
+    ),
+    (
+        "User Folder Icon",
+        "Shows the user profile folder on the desktop",
+        false,
+        Some(tweaks::toggle_user_folder_icon),
+    ),
+    (
+        "Network Icon",
+        "Shows the Network shortcut on the desktop",
+        false,
+        Some(tweaks::toggle_network_icon),
+    ),
+    (
+        "Control Panel Icon",
+        "Shows the Control Panel on the desktop",
+        false,
+        Some(tweaks::toggle_control_panel_icon),
+    ),
+    (
+        "Shortcut Arrow",
+        "Removes the arrow overlay from desktop shortcuts",
+        true,
+        Some(tweaks::toggle_shortcut_arrow),
+    ),
+    (
+        "GPU Scheduling",
+        "Toggles hardware-accelerated GPU scheduling (HAGS; restart required)",
+        true,
+        Some(tweaks::toggle_gpu_scheduling),
+    ),
+    (
+        "Process Priority",
+        "Give foreground apps short, high-boost CPU quanta (Win32PrioritySeparation 0x26)",
+        true,
+        Some(tweaks::toggle_foreground_boost),
+    ),
+    (
         "Hyper-V",
         "Enables the Hyper-V virtualization feature (restart required)",
         true,
@@ -201,13 +286,14 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 26] = [
     ),
 ];
 
-/// A downloadable app on the Store tab: a name, a description and a link.
+/// An entry on the Store tab: what to install, and how.
 ///
-/// The link is either a direct file URL, or a GitHub/HTTP link whose file name
-/// contains a `*` glob (resolved to the newest match). The install method comes
-/// from the downloaded file's extension. Build one with [`StoreApp::new`], or
-/// [`StoreApp::with_args`] when the installer needs arguments.
-/// An install script to run instead of downloading a file.
+/// `link` is either a direct file URL, or a GitHub/HTTP link whose file name
+/// contains a `*` glob (resolved before download). Script-installed apps
+/// instead run an install command/([`StoreScript`]) and skip downloading
+/// altogether. Build one with [`StoreApp::new`] or [`StoreApp::with_args`]
+/// for downloads, [`StoreApp::from_script`] / [`StoreApp::from_package`] for
+/// scripted installs.
 pub enum StoreScript {
     /// Launch `program` with `args`.
     Command(&'static str, &'static [&'static str]),
@@ -216,6 +302,15 @@ pub enum StoreScript {
     GlobalPackage(&'static str),
 }
 
+/// An entry on the Store tab: what to install, and how.
+///
+/// `link` is either a direct file URL, or a GitHub/HTTP link whose file name
+/// contains a `*` glob (resolved before download; the extension decides
+/// whether the file is unpacked or run as an installer). Script-installed
+/// apps instead run a [`StoreScript`] command and skip downloading.
+/// Build one with [`StoreApp::new`] or [`StoreApp::with_args`] for
+/// downloads, [`StoreApp::from_script`] / [`StoreApp::from_package`] for
+/// scripted installs.
 pub struct StoreApp {
     /// Row label, also used as the install folder name.
     pub name: &'static str,
@@ -321,7 +416,7 @@ pub struct StoreCategory {
 /// category to add an app; nothing else needs wiring up.
 pub static STORE_CATEGORIES: [StoreCategory; 8] = [
     StoreCategory {
-        title: "Editors & dev tools",
+        title: "IDEs & Dev Tools",
         apps: &[
             StoreApp::new(
                 "VSCode",
@@ -416,7 +511,7 @@ pub static STORE_CATEGORIES: [StoreCategory; 8] = [
                 &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://pi.dev/install.ps1 | iex"],
             ),
             StoreApp::from_package(
-                "Harness",
+                "Command Code Harness",
                 "command-code CLI, installed on bun or npm",
                 "command-code",
                 "command-code@latest",
@@ -529,7 +624,7 @@ pub static STORE_CATEGORIES: [StoreCategory; 8] = [
             StoreApp::from_script(
                 "WinRAR",
                 "Archive manager",
-                "WinRAR.exe",
+                "WinRAR/WinRAR.exe",
                 "choco",
                 &["install", "winrar", "-y"],
             ),
@@ -556,7 +651,7 @@ pub static STORE_CATEGORIES: [StoreCategory; 8] = [
             StoreApp::from_script(
                 "Windows Terminal",
                 "Modern terminal emulator for Windows",
-                "wt.exe",
+                "chocolatey/bin/wt.exe",
                 "choco",
                 &["install", "microsoft-windows-terminal", "-y"],
             ),
@@ -570,7 +665,7 @@ pub static STORE_CATEGORIES: [StoreCategory; 8] = [
             StoreApp::from_script(
                 "Notepad++",
                 "Source code editor and Notepad replacement",
-                "notepad++.exe",
+                "Notepad++/notepad++.exe",
                 "choco",
                 &["install", "notepadplusplus.install", "-y"],
             ),

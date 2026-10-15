@@ -1,7 +1,7 @@
 //! The Store backend: download an app's link and install it.
 //!
 //! Each Store row is a name and a link (see
-//! [`crate::data::options::STORE_OPTIONS`]). The file lands in
+//! [`crate::data::options::STORE_CATEGORIES`]). The file lands in
 //! `%USERPROFILE%\Downloads\<name>`, then an archive is unpacked there and an
 //! installer is run. A link may also contain a `*` glob: a GitHub
 //! `releases/latest/download` link resolves against the release API, any other
@@ -37,6 +37,17 @@ pub fn bootstrap() -> Result<String, String> {
 
 /// Download `app` and install it; returns the status-bar message.
 pub fn install(app: &StoreApp) -> Result<String, String> {
+    // Name every error after the app so the status bar says what failed.
+    download_and_install(app)
+        .map_err(|error| if error.contains(app.name) {
+            error
+        } else {
+            format!("{}: {error}", app.name)
+        })
+}
+
+/// The plain install flow, without the app-name prefix.
+fn download_and_install(app: &StoreApp) -> Result<String, String> {
     match &app.script {
         Some(StoreScript::Command(program, args)) => {
             sys::run(program, args)?;
@@ -59,13 +70,13 @@ pub fn install(app: &StoreApp) -> Result<String, String> {
         run_installer(&file, app.args)?;
         Ok(format!("installed {} ({name})", app.name))
     } else {
-        Ok(format!("downloaded {name}"))
+        Ok(format!("downloaded {} ({name})", app.name))
     }
 }
 
-/// "Installed" when the app's marker (`app.exe`) exists on PATH or under a
-/// standard install location, "Install" otherwise; script apps are probed
-/// with `--version` instead.
+/// "Installed" when the app's marker is on PATH or under a standard install
+/// location, "Install" otherwise. Checked in-process (no subprocesses), so a
+/// full status refresh stays instant.
 pub fn status(app: &StoreApp) -> String {
     if is_installed(app) {
         "Installed".to_string()
@@ -74,21 +85,51 @@ pub fn status(app: &StoreApp) -> String {
     }
 }
 
-/// True once `app` is installed: its marker should be on PATH, or exist under
-/// a standard install location or its own download folder (portable apps).
+/// True once `app` is installed: its marker should be found on PATH, or exist
+/// under a standard install location or its own download folder.
 fn is_installed(app: &StoreApp) -> bool {
     let exe = app.exe;
-    if exe.is_empty() {
-        return is_downloaded(app.name);
+    // A marker with a folder part is a file check only: matching its bare
+    // name on PATH would false-positive on built-in aliases (the stock
+    // `wt.exe` alias before the app was installed).
+    if exe.contains('/') || exe.contains('\\') {
+        return install_roots(app).iter().any(|root| root.join(exe).exists());
     }
-    let file = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    if app.script.is_some() {
-        return version_ok(exe);
-    }
-    if sys::exit_code("where.exe", &[file]).is_ok_and(|code| code == 0) {
-        return true;
-    }
-    install_roots(app).iter().any(|root| root.join(exe).exists())
+    on_path(exe)
+        || install_roots(app).iter().any(|root| root.join(exe).is_file())
+}
+
+/// The PATH directory list, read once.
+fn path_dirs() -> &'static Vec<PathBuf> {
+    static PATH_DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    PATH_DIRS.get_or_init(|| {
+        std::env::var_os("Path")
+            .unwrap_or_default()
+            .to_string_lossy()
+            .split(';')
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .collect()
+    })
+}
+
+/// True when `name` resolves on PATH like a shell would, using the common
+/// PATHEXT extensions so a bare name ("pi", "command-code") matches its
+/// .exe or .cmd shim. scanned in-process — fast enough to run during every
+/// status refresh, unlike spawning `where.exe` per app.
+fn on_path(name: &str) -> bool {
+    // Already carries an extension (e.g. "pi.cmd") vs a bare command name.
+    let exts: &[&str] = if name.contains('.') {
+        &[""]
+    } else {
+        &["exe", "cmd", "bat", "com"]
+    };
+    path_dirs()
+        .iter()
+        .any(|dir| {
+            exts.iter()
+                .any(|ext| dir.join(if ext.is_empty() { name.to_string() } else { format!("{name}.{ext}") }).is_file())
+        })
 }
 
 /// Locations the install marker is searched under.
@@ -111,25 +152,17 @@ fn install_roots(app: &StoreApp) -> Vec<PathBuf> {
 /// Install a global npm-style package: bun when it is installed, npm when
 /// node/npm is installed, otherwise an error for the status bar.
 fn global_install(app: &StoreApp, package: &str) -> Result<(), String> {
-    if version_ok("bun.exe") {
+    if on_path("bun.exe") {
         sys::run("bun", &["add", "-g", package])?;
-    } else if version_ok("node.exe") {
+    } else if on_path("node.exe") {
         sys::run("npm", &["i", "-g", package])?;
     } else {
         return Err(format!(
-            "{} needs bun or node — install one from the dev-tools section first",
+            "{} needs bun or node — install one from the IDEs & Dev Tools section first",
             app.name
         ));
     }
     Ok(())
-}
-
-/// True when a script-installed app responds to `--version` (its binary is
-/// on PATH). Runs through `cmd /C` so `.cmd`/`.bat` shims (e.g. pi's)
-/// launch like they do in a shell.
-fn version_ok(exe: &str) -> bool {
-    let command = exe.trim_end_matches(".exe");
-    sys::exit_code("cmd.exe", &["/C", command, "--version"]).is_ok_and(|code| code == 0)
 }
 
 /// `%LOCALAPPDATA%\PatchKit` — where PatchKit keeps its own files (the 7-Zip
@@ -149,14 +182,6 @@ fn downloads_dir() -> Result<PathBuf, String> {
 /// An app's download and install folder: `Downloads\<name>`.
 fn app_dir(name: &str) -> Result<PathBuf, String> {
     Ok(downloads_dir()?.join(name))
-}
-
-/// True when the app's folder exists and has content.
-fn is_downloaded(name: &str) -> bool {
-    app_dir(name)
-        .ok()
-        .and_then(|dir| std::fs::read_dir(dir).ok())
-        .is_some_and(|mut entries| entries.next().is_some())
 }
 
 /// True for archive extensions that should be unpacked.
@@ -191,9 +216,20 @@ fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
 
 /// The 7-Zip console, fetched once on first `.7z` use.
 fn seven_zip() -> Result<String, String> {
-    let tool = tools_dir()?.join("7zr.exe");
+    let dir = tools_dir()?;
+    let tool = dir.join("7zr.exe");
     if !tool.is_file() {
-        download(SEVEN_ZIP_URL, &tools_dir()?)?;
+        // The helper's URL always serves "7zr.exe"; download with a fixed
+        // name so the saved path is the one checked above.
+        std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let saved = sys::run(
+            "curl.exe",
+            &[
+                "-L", "--silent", "--show-error", "--fail",
+                "-o", &tool.to_string_lossy(), SEVEN_ZIP_URL,
+            ],
+        )?;
+        let _ = saved;
     }
     Ok(tool.to_string_lossy().into_owned())
 }
@@ -204,6 +240,8 @@ fn seven_zip() -> Result<String, String> {
 fn run_installer(file: &Path, extra_args: &[&str]) -> Result<(), String> {
     let path = file.to_string_lossy().to_string();
     let code = if path.to_ascii_lowercase().ends_with(".msi") {
+        // MSI installs accept their own /passive flag; app.args are only
+        // meant for .exe installers.
         sys::exit_code("msiexec.exe", &["/i", &path, "/passive", "/norestart"])?
     } else if extra_args.is_empty() {
         sys::exit_code(&path, &["/S"])?
@@ -375,6 +413,27 @@ impl StoreStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_path_matches_extensions_and_shims() {
+        // Present in System32 on every Windows box.
+        assert!(on_path("curl.exe"));
+        assert!(on_path("notepad.exe"));
+        // A bare name probes PATHEXT extensions.
+        assert!(!on_path("definitely-not-a-real-command-name-xyz"));
+    }
+
+    #[test]
+    fn is_installed_marks_unknown_apps_missing() {
+        let app = StoreApp::from_script(
+            "DefinitelyNotInstalledApp",
+            "marker for tests",
+            "definitely-not-installed-xyz.exe",
+            "echo",
+            &[],
+        );
+        assert!(!is_installed(&app));
+    }
 
     #[test]
     fn glob_match_supports_wildcards() {
