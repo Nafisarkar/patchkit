@@ -39,6 +39,7 @@ jobs:
       - name: Build installer (NSIS)
         shell: powershell
         run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           $nsis = "$env:NSIS_EXE"
           if (-not (Test-Path $nsis)) {
             Write-Host 'NSIS not found on runner - installing via choco'
