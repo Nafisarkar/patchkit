@@ -45,7 +45,10 @@ jobs:
             choco install nsis -y --no-progress
             $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           }
-          $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '0.0.0' }
+          # NSIS VIProductVersion needs numeric X.X.X — drop any -suffix.
+          $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            ($env:GITHUB_REF_NAME -replace '^v', '') -replace '-.*$', ''
+          } else { '0.0.0' }
           & "$nsis" "/DVERSION=$ver" /V2 installer\patchkit.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path dist\patchkit-setup.exe)) { exit 1 }
