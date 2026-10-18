@@ -43,7 +43,7 @@ pub const CLEANING_OPTIONS: [(&str, &str, bool, Option<Action>); 4] = [
 ];
 
 /// Rows of the Tweaks tab, in display order.
-pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 40] = [
+pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 39] = [
     (
         "Toggle Dark Mode",
         "Switch system apps between light and dark theme",
@@ -61,12 +61,6 @@ pub const TWEAKS_OPTIONS: [(&str, &str, bool, Option<Action>); 40] = [
         "Show or hide hidden files and folders in File Explorer",
         false,
         Some(tweaks::toggle_hidden_files),
-    ),
-    (
-        "Windows Activation",
-        "Activate Windows with massgrave",
-        true,
-        Some(tweaks::activate_windows),
     ),
     (
         "Wallpaper compression",

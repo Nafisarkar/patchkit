@@ -103,7 +103,7 @@ enum StatusLine<'a> {
 }
 
 /// A tab action running on a worker thread, so the UI keeps animating while
-/// slow work (activation, appx removal, downloads) completes.
+/// slow work (appx removal, downloads) completes.
 struct Job {
     /// Row label shown next to the spinner.
     label: String,
@@ -113,9 +113,6 @@ struct Job {
     handle: std::thread::JoinHandle<Result<String, String>>,
     /// Which tab's status snapshot to refresh when the job finishes.
     tab: usize,
-    /// True only for the activation action, whose slow WMI check is refreshed
-    /// separately when the job finishes.
-    refresh_activation: bool,
 }
 
 /// The event loop. Draws a frame, polls events for a short moment, then loops
@@ -142,7 +139,6 @@ fn run(
             started: Instant::now(),
             handle: std::thread::spawn(downloader::bootstrap),
             tab: 2,
-            refresh_activation: false,
         });
     }
     let mut quit_armed = false;
@@ -255,12 +251,6 @@ fn run(
                                                     .to_string();
                                                 message_is_error = true;
                                             } else {
-                                                // The activation check is slow,
-                                                // so it is only refreshed after
-                                                // the activation action itself.
-                                                let refresh_activation =
-                                                    tab_manager.get_selection() == 1
-                                                        && label == "Windows Activation";
                                                 quit_armed = false;
                                                 message_is_error = false;
                                                 job = Some(Job {
@@ -268,7 +258,6 @@ fn run(
                                                     started: Instant::now(),
                                                     handle: std::thread::spawn(action),
                                                     tab: tab_manager.get_selection(),
-                                                    refresh_activation,
                                                 });
                                             }
                                         }
@@ -335,12 +324,7 @@ fn run(
             quit_armed = false;
             match job.tab {
                 0 => cleaning_status.refresh(),
-                1 => {
-                    tweaks_status.refresh();
-                    if job.refresh_activation {
-                        tweaks_status.refresh_activation();
-                    }
-                }
+                1 => tweaks_status.refresh(),
                 2 => store_status.refresh(&STORE_CATEGORIES),
                 _ => {}
             }

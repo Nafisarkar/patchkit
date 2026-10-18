@@ -1,5 +1,5 @@
 //! The Tweaks tab: theme, File Explorer and privacy toggles, preinstalled app
-//! removal, Edge debloat, and Windows activation.
+//! removal, and Edge debloat.
 
 use ratatui::{Frame, layout::Rect, widgets::TableState};
 
@@ -15,7 +15,6 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TableState, status: &Twea
                 "Toggle Dark Mode" => status.dark_mode.as_str(),
                 "Show File Extensions" => status.file_extensions.as_str(),
                 "Show Hidden Files" => status.hidden_files.as_str(),
-                "Windows Activation" => status.activation.as_str(),
                 "Wallpaper compression" => status.wallpaper.as_str(),
                 "Edge Debloat" => status.edge.as_str(),
                 "Start Menu Bing Search" => status.bing_search.as_str(),

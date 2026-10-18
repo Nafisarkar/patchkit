@@ -1,6 +1,5 @@
 //! Backend for the Tweaks tab: theme and File Explorer toggles, wallpaper
-//! compression, Bing search, preinstalled app removal, Edge debloat, and
-//! Windows activation.
+//! compression, Bing search, preinstalled app removal, and Edge debloat.
 //!
 //! Registry values are read and written with `reg.exe`, so no extra
 //! dependency is needed. The `*_enabled` / `*_visible` functions are
@@ -1656,29 +1655,6 @@ pub fn toggle_hidden_files() -> Result<String, String> {
     ))
 }
 
-// -------------------------------------------------------- windows activation
-
-/// True when Windows is activated.
-pub fn activation_status() -> Option<bool> {
-    // LicenseStatus 1 == Licensed.
-    let script = "(Get-CimInstance -ClassName SoftwareLicensingProduct \
-        -Filter \"PartialProductKey is not null and \
-        ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f'\").LicenseStatus";
-    let out = sys::powershell(script).ok()?;
-    // A machine can report more than one product line; it is licensed when any
-    // of them reports status 1.
-    Some(out.lines().any(|line| line.trim() == "1"))
-}
-
-/// Activate Windows with the Microsoft Activation Scripts (HWID method).
-/// Requires administrator rights, and may take a while.
-pub fn activate_windows() -> Result<String, String> {
-    require_admin()?;
-    // Runs the official MAS launcher in the same PowerShell process.
-    sys::powershell("& ([ScriptBlock]::Create((irm https://get.activated.win))) /HWID")?;
-    Ok("activation completed".to_string())
-}
-
 // -------------------------------------------------------------------- status
 
 /// Snapshot of the Tweaks tab's "Status" column.
@@ -1690,8 +1666,6 @@ pub struct TweaksStatus {
     pub file_extensions: String,
     /// Text for the "Show Hidden Files" row.
     pub hidden_files: String,
-    /// Text for the "Windows Activation" row.
-    pub activation: String,
     /// Text for the "Wallpaper compression" row.
     pub wallpaper: String,
     /// Text for the "Edge Debloat" row.
@@ -1765,15 +1739,14 @@ pub struct TweaksStatus {
 }
 
 impl TweaksStatus {
-    /// Full snapshot, including the slow activation check.
+    /// Full snapshot.
     pub fn new() -> Self {
         let mut status = Self::default();
         status.refresh();
-        status.refresh_activation();
         status
     }
 
-    /// Refresh the registry-backed values. Cheap; leaves `activation` untouched.
+    /// Refresh the registry-backed values. Cheap.
     pub fn refresh(&mut self) {
         self.dark_mode = label(dark_mode_enabled(), "Dark", "Light");
         self.file_extensions = label(file_extensions_visible(), "Shown", "Hidden");
@@ -1815,12 +1788,6 @@ impl TweaksStatus {
         self.network_icon = label(network_icon_shown(), "Shown", "Hidden");
         self.control_panel_icon = label(control_panel_icon_shown(), "Shown", "Hidden");
         self.shortcut_arrow = label(shortcut_arrow_visible(), "Shown", "Removed");
-    }
-
-    /// Refresh the activation status. Slow (spawns PowerShell/WMI), so it is
-    /// only run at startup and after the activation tweak.
-    pub fn refresh_activation(&mut self) {
-        self.activation = label(activation_status(), "Activated", "Not activated");
     }
 }
 
